@@ -6,11 +6,32 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
+import '../../../auth/providers/auth_provider.dart';
+import '../../../auth/domain/auth_state.dart';
 import '../../marketplace.dart';
 import 'demo_settings_screen.dart';
 import 'profile_tools.dart';
-import '../../../auth/providers/auth_provider.dart';
-import '../../../auth/domain/auth_state.dart';
+import 'property_map.dart';
+
+import 'package:latlong2/latlong.dart';
+
+Future<void> signOut(BuildContext context, WidgetRef ref) async {
+  try {
+    await ref.read(authProvider.notifier).logout();
+    if (!context.mounted) return;
+    ref.invalidate(bookingsProvider);
+    ref.invalidate(demoSettingsProvider);
+    ref.invalidate(verificationProvider);
+    ref.invalidate(propertiesProvider);
+    context.go('/login');
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not log out. Please retry.')),
+      );
+    }
+  }
+}
 
 const _green = Color(0xFF164D36);
 const _mint = Color(0xFFEAF5ED);
@@ -23,15 +44,17 @@ class MarketPage extends StatelessWidget {
     required this.title,
     required this.children,
     this.nav,
+    this.actions,
   });
   final String title;
   final List<Widget> children;
   final int? nav;
+  final List<Widget>? actions;
 
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: const Color(0xFFF6F8F5),
-    appBar: AppBar(title: Text(title)),
+    appBar: AppBar(title: Text(title), actions: actions),
     bottomNavigationBar: nav == null
         ? null
         : NavigationBar(
@@ -334,6 +357,37 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                 ),
                 validator: (value) => _coordinate(value, 180, _latitude),
               ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Choose pin on map'),
+                onPressed: () async {
+                  final lat = double.tryParse(_latitude.text);
+                  final lng = double.tryParse(_longitude.text);
+                  final valid =
+                      lat != null &&
+                      lng != null &&
+                      lat.abs() <= 90 &&
+                      lng.abs() <= 180;
+                  final pin = await showDialog<LatLng>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: const Text('Property location'),
+                      content: SizedBox(
+                        width: 560,
+                        child: PropertyMap(
+                          initial: valid
+                              ? LatLng(lat, lng)
+                              : const LatLng(43.6532, -79.3832),
+                          editable: true,
+                        ),
+                      ),
+                    ),
+                  );
+                  if (!mounted || pin == null) return;
+                  _latitude.text = pin.latitude.toStringAsFixed(6);
+                  _longitude.text = pin.longitude.toStringAsFixed(6);
+                },
+              ),
               if (_photo case final photo?) DemoImage(photo),
               OutlinedButton.icon(
                 icon: const Icon(Icons.add_a_photo_outlined),
@@ -554,8 +608,10 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
             ),
             Text('Service  ${_money.format(base)}'),
             if (_urgent) Text('Urgent fee  ${_money.format(rushFee)}'),
-            if (walkwayFee > 0) Text('Walkway clearing  '),
-            if (discount > 0) Text('Promo discount  -'),
+            if (walkwayFee > 0)
+              Text('Walkway clearing  ${_money.format(walkwayFee)}'),
+            if (discount > 0)
+              Text('Promo discount  -${_money.format(discount)}'),
             Text('Estimated tax  ${_money.format(tax)}'),
             const Divider(),
             Text(
@@ -566,7 +622,41 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
             FilledButton(
               onPressed: _scheduled == null
                   ? null
-                  : () {
+                  : () async {
+                      if (!_scheduled!.isAfter(DateTime.now())) {
+                        setState(() => _scheduled = null);
+                        return;
+                      }
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (dialog) => AlertDialog(
+                          title: const Text('Review checkout'),
+                          content: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(_service.label),
+                              Text(property.address),
+                              Text(_date.format(_scheduled!)),
+                              const Divider(),
+                              Text('Total: ${_money.format(total)} CAD'),
+                              const Text('Payment method: Demo card'),
+                              const Text('No charge will be made.'),
+                            ],
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(dialog, false),
+                              child: const Text('Back'),
+                            ),
+                            FilledButton(
+                              onPressed: () => Navigator.pop(dialog, true),
+                              child: const Text('Place demo order'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (!context.mounted || confirmed != true) return;
                       if (!_scheduled!.isAfter(DateTime.now())) {
                         setState(() => _scheduled = null);
                         return;
@@ -588,7 +678,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                           );
                       context.go('/bookings');
                     },
-              child: const Text('Confirm booking'),
+              child: const Text('Continue to checkout'),
             ),
           ],
         ),
@@ -604,16 +694,30 @@ class BookingListScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final bookings = ref.watch(bookingsProvider);
+    final available = ref.watch(demoSettingsProvider).available;
     final visible = bookings.where(
       (booking) =>
           !contractor ||
           (!booking.declined &&
-              (booking.status != JobStatus.searching ||
-                  ref.watch(demoSettingsProvider).available)),
+              (booking.status != JobStatus.searching || available)),
     );
     return MarketPage(
       title: contractor ? 'Eden Contractor' : 'My bookings',
       nav: contractor ? null : 1,
+      actions: contractor
+          ? [
+              IconButton(
+                tooltip: 'Profile & settings',
+                icon: const Icon(Icons.person_outline),
+                onPressed: () => context.push('/profile', extra: true),
+              ),
+              TextButton.icon(
+                onPressed: () => signOut(context, ref),
+                icon: const Icon(Icons.logout),
+                label: const Text('Log out'),
+              ),
+            ]
+          : null,
       children: [
         MarketBanner(
           contractor ? 'Job dashboard' : 'Your bookings',
@@ -623,13 +727,37 @@ class BookingListScreen extends ConsumerWidget {
           contractor ? Icons.handyman_outlined : Icons.receipt_long_outlined,
         ),
         if (contractor)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: () => context.push('/profile', extra: true),
-              icon: const Icon(Icons.person_outline),
-              label: const Text('Profile & settings'),
-            ),
+          MarketCard(
+            children: [
+              Text(
+                available ? 'Available for jobs' : 'Offline',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              Text(
+                '${visible.where((job) => job.status == JobStatus.searching).length} available · '
+                '${visible.where((job) => job.status == JobStatus.completed).length} completed',
+              ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => context.push('/profile', extra: true),
+                    icon: const Icon(Icons.person_outline),
+                    label: const Text('Profile & settings'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => context.push('/settings/wallet'),
+                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                    label: const Text('Earnings'),
+                  ),
+                  TextButton(
+                    onPressed: () => context.go('/customer-home'),
+                    child: const Text('Switch to customer'),
+                  ),
+                ],
+              ),
+            ],
           ),
         if (visible.isEmpty)
           const MarketCard(children: [Text('Nothing to show yet.')]),
@@ -773,6 +901,23 @@ class BookingDetailsScreen extends ConsumerWidget {
             Text(_date.format(booking.date)),
             Text('${_money.format(booking.total)} CAD'),
             if (booking.recurring) const Text('Weekly service requested'),
+            if (booking.property.pin case final pin?)
+              OutlinedButton.icon(
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('View property on map'),
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: Text(booking.property.name),
+                    content: SizedBox(
+                      width: 560,
+                      child: PropertyMap(
+                        initial: LatLng(pin.latitude, pin.longitude),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (booking.property.notes.isNotEmpty) Text(booking.property.notes),
             if (booking.notes.isNotEmpty) Text(booking.notes),
             OutlinedButton.icon(
@@ -810,7 +955,7 @@ class BookingDetailsScreen extends ConsumerWidget {
           MarketCard(
             children: [
               Text(
-                'Order summary',
+                'Demo receipt',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               Text('Booking #${booking.id} · ${booking.service.label}'),
@@ -1215,26 +1360,7 @@ class ProfileScreen extends ConsumerWidget {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.logout),
               title: const Text('Log out'),
-              onTap: () async {
-                try {
-                  await ref.read(authProvider.notifier).logout();
-                  if (!context.mounted) return;
-                  ref.invalidate(bookingsProvider);
-                  ref.invalidate(registrationDetailsProvider);
-                  ref.invalidate(demoSettingsProvider);
-                  ref.invalidate(verificationProvider);
-                  ref.invalidate(propertiesProvider);
-                  context.go('/login');
-                } catch (_) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Could not log out. Please retry.'),
-                      ),
-                    );
-                  }
-                }
-              },
+              onTap: () => signOut(context, ref),
             ),
           ],
         ),

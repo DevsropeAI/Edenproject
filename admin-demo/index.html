@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eden Admin Demo</title>
+<style>
+:root{font:16px system-ui,sans-serif;color:#18382a;background:#f3f7f3}
+*{box-sizing:border-box}
+body{margin:0}
+header{background:#154d36;color:white;padding:2rem max(1rem,calc((100vw - 68rem)/2))}
+h1,p{margin:.25rem 0}
+main{max-width:70rem;margin:auto;padding:1rem}
+nav,.metrics{display:flex;flex-wrap:wrap;gap:.75rem;margin:1rem 0}
+button,select,input{font:inherit;padding:.6rem .8rem;border:1px solid #c6d9ca;border-radius:.6rem;background:white;color:inherit}
+button{cursor:pointer}
+button[aria-pressed=true]{background:#154d36;color:white}
+article{background:white;border:1px solid #dce9df;border-radius:1rem;padding:1rem;margin:.75rem 0}
+.metrics article{flex:1;min-width:9rem;margin:0}
+strong{display:block;font-size:1.45rem}
+ul{padding-left:1.25rem}
+li{margin:.6rem 0}
+.row{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:.75rem}
+small{color:#486357}
+</style>
+<header><h1>Eden Admin</h1><p>Marketplace operations · Sample data</p></header>
+<main>
+<section class="metrics" id="metrics" aria-label="Marketplace metrics"></section>
+<nav id="nav" aria-label="Admin sections"></nav>
+<article><h2 id="heading"></h2><label>Search <input id="search" type="search"></label><div id="records"></div></article>
+<p><small>Changes are stored in this page session. Open the Flutter app separately to demonstrate customer and contractor flows.</small></p>
+</main>
+<script>
+const data = {
+  Orders: [
+    {label:'ED-104 · Snow removal · Maple House', detail:'CAD 50.85', state:'Searching', choices:['Searching','Assigned','Completed','Cancelled']},
+    {label:'ED-103 · Lawn mowing · Oak House', detail:'CAD 33.90', state:'Completed', choices:['Searching','Assigned','Completed','Cancelled']}
+  ],
+  Customers: [{label:'Avery Morgan', detail:'Toronto · Sample customer', state:'Active', choices:['Active','Blocked']}],
+  Contractors: [{label:'Jordan Lee', detail:'Toronto · Snow removal', state:'Pending', choices:['Pending','Approved','Rejected','Suspended']}],
+  Services: [{label:'Snow removal', detail:'Base CAD 45', state:'Active', choices:['Active','Inactive']}],
+  Support: [{label:'SP-12 · Request to review work photos', detail:'Linked to order ED-104', state:'Open', choices:['Open','In review','Resolved']}]
+};
+const nav = document.querySelector('#nav');
+const heading = document.querySelector('#heading');
+const search = document.querySelector('#search');
+const records = document.querySelector('#records');
+const metrics = document.querySelector('#metrics');
+let current = 'Orders';
+for (const section of Object.keys(data)) {
+  const button = document.createElement('button');
+  button.textContent = section;
+  button.addEventListener('click', () => { current = section; search.value = ''; render(); });
+  nav.append(button);
+}
+search.addEventListener('input', render);
+function render() {
+  heading.textContent = current;
+  for (const button of nav.children) button.setAttribute('aria-pressed', button.textContent === current);
+  metrics.replaceChildren();
+  for (const [value,label] of [
+    [data.Orders.length,'Orders'],
+    [data.Orders.filter(order => order.state === 'Completed').length,'Completed'],
+    [data.Contractors.filter(person => person.state === 'Pending').length,'Contractors pending'],
+    [data.Support.filter(ticket => ticket.state !== 'Resolved').length,'Open support requests']
+  ]) {
+    const card = document.createElement('article');
+    const number = document.createElement('strong');
+    number.textContent = value;
+    card.append(number,label);
+    metrics.append(card);
+  }
+  records.replaceChildren();
+  const matches = data[current].filter(record => record.label.toLowerCase().includes(search.value.trim().toLowerCase()));
+  if (!matches.length) records.textContent = 'No matching records.';
+  for (const record of matches) {
+    const card = document.createElement('article');
+    card.className = 'row';
+    const description = document.createElement('div');
+    const label = document.createElement('b');
+    label.textContent = record.label;
+    const detail = document.createElement('p');
+    detail.textContent = record.detail;
+    description.append(label,detail);
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', 'Status for ' + record.label);
+    for (const choice of record.choices) select.add(new Option(choice,choice,false,choice === record.state));
+    select.addEventListener('change', () => { record.state = select.value; render(); });
+    card.append(description,select);
+    records.append(card);
+  }
+}
+render();
+</script>
+</html>
