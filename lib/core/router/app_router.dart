@@ -1,5 +1,7 @@
 import 'package:go_router/go_router.dart';
 
+import '../../features/home/presentation/screens/account_extras_screen.dart';
+
 import '../../features/home/presentation/screens/integration_demo_screen.dart';
 
 import '../../features/home/presentation/screens/profile_tools.dart';
@@ -22,6 +24,17 @@ class AppRouter {
   static final router = GoRouter(
     initialLocation: '/login',
     routes: [
+      GoRoute(
+        path: '/account/:section',
+        builder: (context, state) {
+          final section = AccountSection.values
+              .where((value) => value.name == state.pathParameters['section'])
+              .firstOrNull;
+          return section == null
+              ? const ProfileScreen()
+              : AccountExtrasScreen(section: section);
+        },
+      ),
       GoRoute(
         path: '/integration-demo',
         builder: (context, state) => const IntegrationDemoScreen(),

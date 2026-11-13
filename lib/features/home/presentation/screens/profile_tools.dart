@@ -9,6 +9,7 @@ import '../../../auth/domain/auth_state.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../marketplace.dart';
 import 'demo_settings_screen.dart';
+import 'account_extras_screen.dart';
 import 'marketplace_screens.dart';
 
 Future<Uint8List?> selectDemoImage(BuildContext context) async {
@@ -50,6 +51,17 @@ class DemoImage extends StatelessWidget {
   );
 }
 
+final profilePhotoProvider = NotifierProvider<ProfilePhoto, Uint8List?>(
+  ProfilePhoto.new,
+);
+
+class ProfilePhoto extends Notifier<Uint8List?> {
+  @override
+  Uint8List? build() => null;
+
+  void save(Uint8List? photo) => state = photo;
+}
+
 class EditProfileScreen extends ConsumerStatefulWidget {
   const EditProfileScreen({super.key});
 
@@ -68,6 +80,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     text: ref.read(registrationDetailsProvider).phone,
   );
   bool _deleting = false;
+  late Uint8List? _photo = ref.read(profilePhotoProvider);
 
   @override
   void dispose() {
@@ -95,6 +108,20 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
           key: _form,
           child: MarketCard(
             children: [
+              if (_photo case final photo?) DemoImage(photo),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.image_outlined),
+                label: const Text('Choose profile photo'),
+                onPressed: () async {
+                  final photo = await selectDemoImage(context);
+                  if (photo != null && mounted) setState(() => _photo = photo);
+                },
+              ),
+              if (_photo != null)
+                TextButton(
+                  onPressed: () => setState(() => _photo = null),
+                  child: const Text('Remove profile photo'),
+                ),
               TextFormField(
                 controller: _name,
                 decoration: const InputDecoration(labelText: 'Full name'),
@@ -131,6 +158,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             .updateProfile(
                               user.copyWith(name: _name.text.trim()),
                             );
+                        ref.read(profilePhotoProvider.notifier).save(_photo);
                         context.pop();
                       },
                 child: const Text('Save changes'),
@@ -174,6 +202,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         ref.invalidate(propertiesProvider);
                         ref.invalidate(bookingsProvider);
                         ref.invalidate(demoSettingsProvider);
+                        ref.invalidate(localAccountProvider);
+                        ref.invalidate(profilePhotoProvider);
                         ref.invalidate(payoutRequestedProvider);
                         ref.invalidate(verificationProvider);
                         context.go('/login');

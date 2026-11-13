@@ -11,6 +11,7 @@ import '../../../auth/domain/auth_state.dart';
 import '../../marketplace.dart';
 import 'demo_settings_screen.dart';
 import 'profile_tools.dart';
+import 'account_extras_screen.dart';
 import 'property_map.dart';
 
 import 'package:latlong2/latlong.dart';
@@ -22,6 +23,8 @@ Future<void> signOut(BuildContext context, WidgetRef ref) async {
     ref.invalidate(bookingsProvider);
     ref.invalidate(demoSettingsProvider);
     ref.invalidate(payoutRequestedProvider);
+    ref.invalidate(localAccountProvider);
+    ref.invalidate(profilePhotoProvider);
     ref.invalidate(verificationProvider);
     ref.invalidate(propertiesProvider);
     context.go('/login');
@@ -135,23 +138,26 @@ class MarketCard extends StatelessWidget {
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      color: Colors.white,
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: const Color(0xFFDDE7DE)),
+      side: const BorderSide(color: Color(0xFFDDE7DE)),
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final child in children)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            child: child,
-          ),
-      ],
+    clipBehavior: Clip.antiAlias,
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final child in children)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: child,
+            ),
+        ],
+      ),
     ),
   );
 }
@@ -892,6 +898,13 @@ class BookingDetailsScreen extends ConsumerWidget {
     );
     return MarketPage(
       title: contractor ? 'Job details' : 'Booking details',
+      actions: [
+        TextButton(
+          onPressed: () =>
+              context.go(contractor ? '/contractor-home' : '/bookings'),
+          child: Text(contractor ? 'All jobs' : 'All bookings'),
+        ),
+      ],
       children: [
         MarketBanner(
           booking.service.label,
@@ -931,29 +944,6 @@ class BookingDetailsScreen extends ConsumerWidget {
             ),
           ],
         ),
-        MarketCard(
-          children: [
-            Text(
-              'Service progress',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            for (final status in JobStatus.values)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  status.index < booking.status.index
-                      ? Icons.check_circle_outline
-                      : status == booking.status
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  color: status.index <= booking.status.index ? _green : null,
-                ),
-                title: Text(status.label),
-                selected: status == booking.status,
-              ),
-          ],
-        ),
         if (!contractor && booking.status == JobStatus.enRoute)
           MarketCard(
             children: [
@@ -980,6 +970,18 @@ class BookingDetailsScreen extends ConsumerWidget {
                     : 'No payment collected for this demo order.',
               ),
             ],
+          ),
+        if (!booking.declined || contractor)
+          TextButton.icon(
+            onPressed: () => context.go(
+              '/${contractor ? 'bookings' : 'job-details'}/${booking.id}',
+            ),
+            icon: const Icon(Icons.swap_horiz),
+            label: Text(
+              contractor
+                  ? 'Demo: open customer view'
+                  : 'Demo: open contractor view',
+            ),
           ),
         if (booking.referencePhoto case final photo?)
           MarketCard(
@@ -1016,6 +1018,14 @@ class BookingDetailsScreen extends ConsumerWidget {
                     ),
                   ),
                 ],
+              if (contractor &&
+                  booking.status == JobStatus.arrived &&
+                  booking.before == null)
+                const Text('Add a before photo to start work.'),
+              if (contractor &&
+                  booking.status == JobStatus.working &&
+                  booking.after == null)
+                const Text('Add an after photo to submit the job.'),
               if (contractor && booking.status == JobStatus.arrived)
                 OutlinedButton.icon(
                   onPressed: () =>
@@ -1119,6 +1129,29 @@ class BookingDetailsScreen extends ConsumerWidget {
             ),
             child: const Text('Rate the service'),
           ),
+        MarketCard(
+          children: [
+            Text(
+              'Service progress',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            for (final status in JobStatus.values)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  status.index < booking.status.index
+                      ? Icons.check_circle_outline
+                      : status == booking.status
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: status.index <= booking.status.index ? _green : null,
+                ),
+                title: Text(status.label),
+                selected: status == booking.status,
+              ),
+          ],
+        ),
         if (booking.rating != null)
           MarketCard(
             children: [
@@ -1328,6 +1361,8 @@ class ProfileScreen extends ConsumerWidget {
         MarketCard(
           children: [
             if (user != null) ...[
+              if (ref.watch(profilePhotoProvider) case final photo?)
+                CircleAvatar(radius: 28, backgroundImage: MemoryImage(photo)),
               Text(user.email),
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -1354,6 +1389,19 @@ class ProfileScreen extends ConsumerWidget {
               title: const Text('Integration previews'),
               onTap: () => context.push('/integration-demo'),
             ),
+            for (final section in [
+              AccountSection.reviews,
+              if (contractor) AccountSection.schedule,
+              if (!contractor) AccountSection.payments,
+              if (!contractor) AccountSection.recurring,
+            ])
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(section.icon),
+                title: Text(section.label),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/account/${section.name}'),
+              ),
             for (final section in [
               SettingsSection.support,
               SettingsSection.preferences,
