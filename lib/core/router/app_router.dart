@@ -1,5 +1,7 @@
 import 'package:go_router/go_router.dart';
 
+import '../../features/home/presentation/screens/integration_demo_screen.dart';
+
 import '../../features/home/presentation/screens/profile_tools.dart';
 
 import '../../features/home/presentation/screens/demo_settings_screen.dart';
@@ -20,6 +22,10 @@ class AppRouter {
   static final router = GoRouter(
     initialLocation: '/login',
     routes: [
+      GoRoute(
+        path: '/integration-demo',
+        builder: (context, state) => const IntegrationDemoScreen(),
+      ),
       GoRoute(
         path: '/reset-password',
         builder: (context, state) =>

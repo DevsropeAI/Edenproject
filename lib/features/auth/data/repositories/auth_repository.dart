@@ -69,6 +69,14 @@ class AuthRepository {
     }
   }
 
+  bool resetDemoPassword(String email, String password) {
+    final key = email.toLowerCase();
+    final account = _demoAccounts[key];
+    if (account == null) return false;
+    _demoAccounts[key] = (user: account.user, password: password);
+    return true;
+  }
+
   Future<void> deleteAccount(String email) async {
     await _storage.deleteToken();
     final key = email.toLowerCase();

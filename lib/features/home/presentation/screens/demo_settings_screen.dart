@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../marketplace.dart';
@@ -65,6 +66,16 @@ class DemoSettingsScreen extends ConsumerStatefulWidget {
   ConsumerState<DemoSettingsScreen> createState() => _DemoSettingsScreenState();
 }
 
+final payoutRequestedProvider = NotifierProvider<PayoutRequested, double>(
+  PayoutRequested.new,
+);
+
+class PayoutRequested extends Notifier<double> {
+  @override
+  double build() => 0;
+  void request(double amount) => state += amount;
+}
+
 class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
   final _ticket = TextEditingController();
   final _supportForm = GlobalKey<FormState>();
@@ -90,6 +101,7 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
     final completed = bookings.where(
       (item) => item.status == JobStatus.completed,
     );
+    final payout = ref.watch(payoutRequestedProvider);
     final gross = completed.fold<double>(
       0,
       (total, booking) => total + booking.total,
@@ -129,6 +141,17 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
               ),
             ],
             SettingsSection.wallet => [
+              Text('Demo payout queued: CAD ${payout.toStringAsFixed(2)}'),
+              FilledButton(
+                onPressed: gross <= payout
+                    ? null
+                    : () {
+                        ref
+                            .read(payoutRequestedProvider.notifier)
+                            .request(gross - payout);
+                      },
+                child: const Text('Request demo payout'),
+              ),
               Text('Completed jobs: ${completed.length}'),
               Text('Completed order total: CAD ${gross.toStringAsFixed(2)}'),
               for (final booking in completed)
@@ -225,6 +248,35 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
                   child: const Text('Save preference'),
                 ),
               ],
+              if (properties
+                      .where((property) => property.id == settings.snowProperty)
+                      .firstOrNull
+                  case final property?)
+                OutlinedButton(
+                  onPressed: () {
+                    final existing = bookings.any(
+                      (booking) =>
+                          booking.property.id == property.id &&
+                          booking.notes == 'Proposed from a sample snowfall.',
+                    );
+                    if (existing) {
+                      context.go('/bookings');
+                      return;
+                    }
+                    ref
+                        .read(bookingsProvider.notifier)
+                        .place(
+                          property,
+                          Service.snow,
+                          DateTime.now().add(const Duration(days: 1)),
+                          50.85,
+                          'Proposed from a sample snowfall.',
+                          false,
+                        );
+                    context.go('/bookings');
+                  },
+                  child: Text('Simulate ${settings.threshold} in of snow'),
+                ),
               if (settings.snowProperty != null)
                 TextButton(
                   onPressed: () {

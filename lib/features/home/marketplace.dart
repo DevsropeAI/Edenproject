@@ -15,6 +15,7 @@ enum Service {
 enum JobStatus {
   searching('Searching for contractor'),
   accepted('Contractor accepted'),
+  enRoute('Contractor is on the way'),
   arrived('Contractor arrived'),
   working('Work in progress'),
   submitted('Awaiting customer approval'),
@@ -69,6 +70,7 @@ class Booking {
     required this.notes,
     this.recurring = false,
     this.referencePhoto,
+    this.demoPaid = false,
     this.status = JobStatus.searching,
     this.before,
     this.after,
@@ -86,6 +88,7 @@ class Booking {
   final String notes;
   final bool recurring;
   final Uint8List? referencePhoto;
+  final bool demoPaid;
   final JobStatus status;
   final Uint8List? before;
   final Uint8List? after;
@@ -112,6 +115,7 @@ class Booking {
     notes: notes,
     recurring: recurring,
     referencePhoto: referencePhoto,
+    demoPaid: demoPaid,
     status: status ?? this.status,
     before: before ?? this.before,
     after: clearAfter ? null : after ?? this.after,
@@ -217,6 +221,7 @@ class Bookings extends Notifier<List<Booking>> {
     String notes,
     bool recurring, {
     Uint8List? referencePhoto,
+    bool demoPaid = false,
   }) {
     state = [
       Booking(
@@ -228,6 +233,7 @@ class Bookings extends Notifier<List<Booking>> {
         notes: notes,
         recurring: recurring,
         referencePhoto: referencePhoto,
+        demoPaid: demoPaid,
       ),
       ...state,
     ];

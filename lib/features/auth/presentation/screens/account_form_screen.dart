@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../home/presentation/screens/marketplace_screens.dart';
 import '../../domain/auth_state.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../../providers/auth_provider.dart';
 
 enum AuthMode { login, customer, contractor, reset }
@@ -23,9 +24,11 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _phone = TextEditingController();
+  final _verificationCode = TextEditingController();
   final _area = TextEditingController();
   bool _obscure = true;
   bool _busy = false;
+  bool _resetRequested = false;
   String? _feedback;
   String _service = 'Snow removal';
 
@@ -35,7 +38,14 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
 
   @override
   void dispose() {
-    for (final controller in [_name, _email, _password, _phone, _area]) {
+    for (final controller in [
+      _name,
+      _email,
+      _password,
+      _phone,
+      _area,
+      _verificationCode,
+    ]) {
       controller.dispose();
     }
     super.dispose();
@@ -44,8 +54,24 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
   Future<void> _submit() async {
     if (_busy || !_form.currentState!.validate()) return;
     if (_reset) {
+      if (_resetRequested) {
+        final changed = ref
+            .read(authRepositoryProvider)
+            .resetDemoPassword(_email.text.trim(), _password.text);
+        if (changed) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Demo password updated.')),
+          );
+          context.go('/login');
+        } else {
+          setState(
+            () => _feedback = 'Register a demo account in this session first.',
+          );
+        }
+        return;
+      }
       setState(
-        () => _feedback = 'Reset request previewed. Email delivery will be available when the account service is connected.',
+        () => _feedback = 'Use the sample reset link below. No email was sent.',
       );
       return;
     }
@@ -178,6 +204,16 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                               ? 'Enter a valid phone number'
                               : null,
                         ),
+                      if (!_login && !_reset)
+                        _field(
+                          _verificationCode,
+                          'Demo verification code (123456)',
+                          Icons.sms_outlined,
+                          keyboard: TextInputType.number,
+                          validate: (value) => value == '123456'
+                              ? null
+                              : 'Enter the sample code 123456',
+                        ),
                       if (_contractor) ...[
                         _field(
                           _area,
@@ -205,7 +241,7 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                               : (value) => setState(() => _service = value!),
                         ),
                       ],
-                      if (!_reset)
+                      if (!_reset || _resetRequested)
                         TextFormField(
                           controller: _password,
                           enabled: !_busy,
@@ -244,6 +280,14 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                             child: const Text('Forgot password?'),
                           ),
                         ),
+                      if (_reset && _feedback != null && !_resetRequested)
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _resetRequested = true;
+                            _feedback = null;
+                          }),
+                          child: const Text('Open sample reset link'),
+                        ),
                       if (_feedback != null)
                         Text(
                           _feedback!,
@@ -268,7 +312,9 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                                   _login
                                       ? 'Sign in'
                                       : _reset
-                                      ? 'Request reset link'
+                                      ? (_resetRequested
+                                            ? 'Set demo password'
+                                            : 'Request reset link')
                                       : 'Create account',
                                 ),
                         ),

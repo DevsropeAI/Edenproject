@@ -21,6 +21,7 @@ Future<void> signOut(BuildContext context, WidgetRef ref) async {
     if (!context.mounted) return;
     ref.invalidate(bookingsProvider);
     ref.invalidate(demoSettingsProvider);
+    ref.invalidate(payoutRequestedProvider);
     ref.invalidate(verificationProvider);
     ref.invalidate(propertiesProvider);
     context.go('/login');
@@ -675,6 +676,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             ].join(' '),
                             _recurring,
                             referencePhoto: _referencePhoto,
+                            demoPaid: true,
                           );
                       context.go('/bookings');
                     },
@@ -769,6 +771,7 @@ class BookingListScreen extends ConsumerWidget {
                       'Active jobs',
                       [
                         JobStatus.accepted,
+                        JobStatus.enRoute,
                         JobStatus.arrived,
                         JobStatus.working,
                         JobStatus.submitted,
@@ -951,6 +954,17 @@ class BookingDetailsScreen extends ConsumerWidget {
               ),
           ],
         ),
+        if (!contractor && booking.status == JobStatus.enRoute)
+          MarketCard(
+            children: [
+              const Text('Booking update · Your contractor is on the way'),
+              const Text('Simulated location · 1.2 km away · ETA 4 min'),
+              if (booking.property.pin case final pin?)
+                PropertyMap(
+                  initial: LatLng(pin.latitude + .006, pin.longitude),
+                ),
+            ],
+          ),
         if (!contractor && booking.status == JobStatus.completed)
           MarketCard(
             children: [
@@ -960,7 +974,11 @@ class BookingDetailsScreen extends ConsumerWidget {
               ),
               Text('Booking #${booking.id} · ${booking.service.label}'),
               Text('Quoted total: ${_money.format(booking.total)} CAD'),
-              const Text('Demo order. No payment was collected.'),
+              Text(
+                booking.demoPaid
+                    ? 'Demo card approved. No money moved.'
+                    : 'No payment collected for this demo order.',
+              ),
             ],
           ),
         if (booking.referencePhoto case final photo?)
@@ -1036,6 +1054,11 @@ class BookingDetailsScreen extends ConsumerWidget {
               ],
             ),
           if (booking.status == JobStatus.accepted)
+            FilledButton(
+              onPressed: () => advance(JobStatus.enRoute),
+              child: const Text('Mark on the way'),
+            ),
+          if (booking.status == JobStatus.enRoute)
             FilledButton(
               onPressed: () => advance(JobStatus.arrived),
               child: const Text('Mark arrived'),
@@ -1325,6 +1348,12 @@ class ProfileScreen extends ConsumerWidget {
               Text(registration.area),
             if (contractor && registration.service.isNotEmpty)
               Text(registration.service),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.play_circle_outline),
+              title: const Text('Integration previews'),
+              onTap: () => context.push('/integration-demo'),
+            ),
             for (final section in [
               SettingsSection.support,
               SettingsSection.preferences,

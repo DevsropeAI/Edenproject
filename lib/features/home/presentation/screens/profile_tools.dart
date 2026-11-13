@@ -174,6 +174,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                         ref.invalidate(propertiesProvider);
                         ref.invalidate(bookingsProvider);
                         ref.invalidate(demoSettingsProvider);
+                        ref.invalidate(payoutRequestedProvider);
                         ref.invalidate(verificationProvider);
                         context.go('/login');
                       } catch (_) {
