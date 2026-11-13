@@ -1,4 +1,5 @@
 import 'package:go_router/go_router.dart';
+
 import '../../features/auth/presentation/screens/onboarding_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/customer_register_screen.dart';
@@ -6,18 +7,18 @@ import '../../features/auth/presentation/screens/contractor_register_screen.dart
 import '../../features/home/presentation/screens/customer_home_screen.dart';
 import '../../features/home/presentation/screens/contractor_home_screen.dart';
 
+import '../../features/home/marketplace.dart';
+import '../../features/home/presentation/screens/marketplace_screens.dart';
+
 class AppRouter {
   static final router = GoRouter(
-    initialLocation: '/login', 
+    initialLocation: '/login',
     routes: [
       GoRoute(
         path: '/onboarding',
         builder: (context, state) => const OnboardingScreen(),
       ),
-      GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginScreen(),
-      ),
+      GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(
         path: '/register/customer',
         builder: (context, state) => const CustomerRegisterScreen(),
@@ -33,6 +34,46 @@ class AppRouter {
       GoRoute(
         path: '/contractor-home',
         builder: (context, state) => const ContractorHomeScreen(),
+      ),
+      GoRoute(
+        path: '/properties',
+        builder: (context, state) =>
+            PropertiesScreen(service: state.extra as Service?),
+      ),
+      GoRoute(
+        path: '/booking/:id',
+        builder: (context, state) => BookingScreen(
+          propertyId: int.tryParse(state.pathParameters['id']!),
+          service: state.extra as Service?,
+        ),
+      ),
+      GoRoute(
+        path: '/bookings',
+        builder: (context, state) => const BookingListScreen(),
+      ),
+      GoRoute(
+        path: '/bookings/:id',
+        builder: (context, state) =>
+            BookingDetailsScreen(id: int.tryParse(state.pathParameters['id']!)),
+      ),
+      GoRoute(
+        path: '/job-details/:id',
+        builder: (context, state) => BookingDetailsScreen(
+          id: int.tryParse(state.pathParameters['id']!),
+          contractor: true,
+        ),
+      ),
+      GoRoute(
+        path: '/chat/:id',
+        builder: (context, state) => ChatScreen(
+          id: int.tryParse(state.pathParameters['id']!),
+          contractor: state.extra == true,
+        ),
+      ),
+      GoRoute(
+        path: '/profile',
+        builder: (context, state) =>
+            ProfileScreen(contractor: state.extra == true),
       ),
     ],
   );
