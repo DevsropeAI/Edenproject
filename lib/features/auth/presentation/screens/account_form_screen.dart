@@ -66,20 +66,26 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
     }
     if (!mounted) return;
     final result = ref.read(authProvider);
+    if (!_login &&
+        result.maybeWhen(unauthenticated: () => true, orElse: () => false)) {
+      ref
+          .read(registrationDetailsProvider.notifier)
+          .save(
+            phone: _phone.text.trim(),
+            area: _area.text.trim(),
+            service: _contractor ? _service : '',
+          );
+      context.go('/login');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account created. Sign in to continue.')),
+      );
+      return;
+    }
     final user = result.maybeWhen(
       authenticated: (user) => user,
       orElse: () => null,
     );
     if (user != null) {
-      if (!_login) {
-        ref
-            .read(registrationDetailsProvider.notifier)
-            .save(
-              phone: _phone.text.trim(),
-              area: _area.text.trim(),
-              service: _contractor ? _service : '',
-            );
-      }
       context.go(
         user.role == 'contractor' ? '/contractor-home' : '/customer-home',
       );

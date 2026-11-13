@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +8,7 @@ import 'package:intl/intl.dart';
 
 import '../../marketplace.dart';
 import 'demo_settings_screen.dart';
+import 'profile_tools.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../../auth/domain/auth_state.dart';
 
@@ -167,7 +170,19 @@ class PropertiesScreen extends ConsumerWidget {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               Text(property.address),
-              Text('${property.size} property'),
+              Text(
+                '${property.type} · ${property.size}${property.isDefault ? ' · Default' : ''}',
+              ),
+              if (property.photo case final photo?) DemoImage(photo),
+              if (property.pin case final pin?)
+                Text('Pin: ${pin.latitude}, ${pin.longitude}'),
+              if (!property.isDefault)
+                TextButton(
+                  onPressed: () => ref
+                      .read(propertiesProvider.notifier)
+                      .setDefault(property.id),
+                  child: const Text('Set as default'),
+                ),
               if (property.notes.isNotEmpty) Text(property.notes),
               Wrap(
                 spacing: 8,
@@ -234,12 +249,37 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
   late final _name = TextEditingController(text: widget.property?.name);
   late final _address = TextEditingController(text: widget.property?.address);
   late final _notes = TextEditingController(text: widget.property?.notes);
+  late String _type = widget.property?.type ?? 'House';
+  late Uint8List? _photo = widget.property?.photo;
+  late final _latitude = TextEditingController(
+    text: widget.property?.pin?.latitude.toString(),
+  );
+  late final _longitude = TextEditingController(
+    text: widget.property?.pin?.longitude.toString(),
+  );
+
+  String? _coordinate(
+    String? value,
+    double limit,
+    TextEditingController other,
+  ) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty && other.text.trim().isEmpty) return null;
+    final number = double.tryParse(text);
+    if (number == null || !number.isFinite || number.abs() > limit) {
+      return 'Enter a valid coordinate';
+    }
+    return null;
+  }
+
   late String _size = widget.property?.size ?? 'Standard';
 
   @override
   void dispose() {
     _name.dispose();
     _address.dispose();
+    _latitude.dispose();
+    _longitude.dispose();
     _notes.dispose();
     super.dispose();
   }
@@ -270,7 +310,39 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                 ],
                 onChanged: (size) => setState(() => _size = size!),
               ),
+              DropdownButtonFormField<String>(
+                initialValue: _type,
+                decoration: const InputDecoration(labelText: 'Property type'),
+                items: [
+                  for (final type in ['House', 'Apartment', 'Commercial'])
+                    DropdownMenuItem(value: type, child: Text(type)),
+                ],
+                onChanged: (value) => setState(() => _type = value!),
+              ),
               _field(_notes, 'Access instructions'),
+              TextFormField(
+                controller: _latitude,
+                decoration: const InputDecoration(
+                  labelText: 'Latitude (optional)',
+                ),
+                validator: (value) => _coordinate(value, 90, _longitude),
+              ),
+              TextFormField(
+                controller: _longitude,
+                decoration: const InputDecoration(
+                  labelText: 'Longitude (optional)',
+                ),
+                validator: (value) => _coordinate(value, 180, _latitude),
+              ),
+              if (_photo case final photo?) DemoImage(photo),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.add_a_photo_outlined),
+                label: const Text('Choose property photo'),
+                onPressed: () async {
+                  final bytes = await selectDemoImage(context);
+                  if (mounted && bytes != null) setState(() => _photo = bytes);
+                },
+              ),
             ],
           ),
         ),
@@ -292,6 +364,14 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                 _address.text.trim(),
                 _size,
                 _notes.text.trim(),
+                type: _type,
+                photo: _photo,
+                pin: _latitude.text.trim().isEmpty
+                    ? null
+                    : (
+                        latitude: double.parse(_latitude.text.trim()),
+                        longitude: double.parse(_longitude.text.trim()),
+                      ),
               );
           Navigator.pop(context);
         },
@@ -332,6 +412,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   bool _urgent = false;
   bool _recurring = false;
   bool _walkway = false;
+  Uint8List? _referencePhoto;
   final _coupon = TextEditingController();
 
   @override
@@ -452,6 +533,17 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               ),
             ),
             _field(_notes, 'Instructions for the contractor'),
+            if (_referencePhoto case final photo?) DemoImage(photo),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.add_a_photo_outlined),
+              label: const Text('Choose reference photo'),
+              onPressed: () async {
+                final bytes = await selectDemoImage(context);
+                if (mounted && bytes != null) {
+                  setState(() => _referencePhoto = bytes);
+                }
+              },
+            ),
           ],
         ),
         MarketCard(
@@ -492,6 +584,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                                 _notes.text.trim(),
                             ].join(' '),
                             _recurring,
+                            referencePhoto: _referencePhoto,
                           );
                       context.go('/bookings');
                     },
@@ -690,6 +783,45 @@ class BookingDetailsScreen extends ConsumerWidget {
             ),
           ],
         ),
+        MarketCard(
+          children: [
+            Text(
+              'Service progress',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            for (final status in JobStatus.values)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  status.index < booking.status.index
+                      ? Icons.check_circle_outline
+                      : status == booking.status
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: status.index <= booking.status.index ? _green : null,
+                ),
+                title: Text(status.label),
+                selected: status == booking.status,
+              ),
+          ],
+        ),
+        if (!contractor && booking.status == JobStatus.completed)
+          MarketCard(
+            children: [
+              Text(
+                'Order summary',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              Text('Booking #${booking.id} · ${booking.service.label}'),
+              Text('Quoted total: ${_money.format(booking.total)} CAD'),
+              const Text('Demo order. No payment was collected.'),
+            ],
+          ),
+        if (booking.referencePhoto case final photo?)
+          MarketCard(
+            children: [const Text('Booking reference photo'), DemoImage(photo)],
+          ),
         if (booking.before != null ||
             booking.after != null ||
             (contractor &&
@@ -799,6 +931,7 @@ class BookingDetailsScreen extends ConsumerWidget {
                         (
                           contractor: false,
                           text: 'I requested rework. Please check in before resubmitting.',
+                          image: null,
                         ),
                       ],
                     ),
@@ -925,9 +1058,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         children: [Text('Booking unavailable.')],
       );
     }
-    void send() {
+    void send([Uint8List? image]) {
       final message = _message.text.trim();
-      if (message.isEmpty) return;
+      if (message.isEmpty && image == null) return;
       ref
           .read(bookingsProvider.notifier)
           .change(
@@ -935,7 +1068,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             (current) => current.update(
               messages: [
                 ...current.messages,
-                (contractor: widget.contractor, text: message),
+                (contractor: widget.contractor, text: message, image: image),
               ],
             ),
           );
@@ -965,8 +1098,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     color: _mint,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Text(
-                    '${message.contractor ? 'Contractor' : 'Customer'}\n${message.text}',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${message.contractor ? 'Contractor' : 'Customer'}\n${message.text}',
+                      ),
+                      if (message.image case final image?) DemoImage(image),
+                    ],
                   ),
                 ),
               ),
@@ -975,6 +1114,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               onSubmitted: (_) => send(),
               decoration: InputDecoration(
                 labelText: 'Message',
+                prefixIcon: IconButton(
+                  tooltip: 'Attach photo',
+                  icon: const Icon(Icons.image_outlined),
+                  onPressed: () async {
+                    final bytes = await selectDemoImage(context);
+                    if (mounted && bytes != null) send(bytes);
+                  },
+                ),
                 suffixIcon: IconButton(
                   onPressed: send,
                   tooltip: 'Send',
@@ -1012,7 +1159,22 @@ class ProfileScreen extends ConsumerWidget {
         ),
         MarketCard(
           children: [
-            if (user != null) Text(user.email),
+            if (user != null) ...[
+              Text(user.email),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit profile'),
+                onTap: () => context.push('/profile/edit'),
+              ),
+            ],
+            if (contractor)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.verified_user_outlined),
+                title: const Text('Verification documents'),
+                onTap: () => context.push('/verification'),
+              ),
             if (registration.phone.isNotEmpty) Text(registration.phone),
             if (contractor && registration.area.isNotEmpty)
               Text(registration.area),
@@ -1060,6 +1222,7 @@ class ProfileScreen extends ConsumerWidget {
                   ref.invalidate(bookingsProvider);
                   ref.invalidate(registrationDetailsProvider);
                   ref.invalidate(demoSettingsProvider);
+                  ref.invalidate(verificationProvider);
                   ref.invalidate(propertiesProvider);
                   context.go('/login');
                 } catch (_) {

@@ -1,5 +1,7 @@
 import 'package:go_router/go_router.dart';
 
+import '../../features/home/presentation/screens/profile_tools.dart';
+
 import '../../features/home/presentation/screens/demo_settings_screen.dart';
 
 import '../../features/auth/presentation/screens/account_form_screen.dart';
@@ -91,6 +93,14 @@ class AppRouter {
               ? const ProfileScreen()
               : DemoSettingsScreen(section: section);
         },
+      ),
+      GoRoute(
+        path: '/profile/edit',
+        builder: (context, state) => const EditProfileScreen(),
+      ),
+      GoRoute(
+        path: '/verification',
+        builder: (context, state) => const VerificationScreen(),
       ),
       GoRoute(
         path: '/profile',

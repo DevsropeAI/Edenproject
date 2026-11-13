@@ -25,11 +25,37 @@ enum JobStatus {
 }
 
 class Property {
-  const Property(this.id, this.name, this.address, this.size, this.notes);
+  const Property(
+    this.id,
+    this.name,
+    this.address,
+    this.size,
+    this.notes, {
+    this.type = "House",
+    this.photo,
+    this.pin,
+    this.isDefault = false,
+  });
   final int id;
   final String name;
   final String address;
   final String size;
+  final String type;
+  final Uint8List? photo;
+  final ({double latitude, double longitude})? pin;
+  final bool isDefault;
+
+  Property withDefault(bool value) => Property(
+    id,
+    name,
+    address,
+    size,
+    notes,
+    type: type,
+    photo: photo,
+    pin: pin,
+    isDefault: value,
+  );
   final String notes;
 }
 
@@ -42,6 +68,7 @@ class Booking {
     required this.total,
     required this.notes,
     this.recurring = false,
+    this.referencePhoto,
     this.status = JobStatus.searching,
     this.before,
     this.after,
@@ -58,10 +85,11 @@ class Booking {
   final double total;
   final String notes;
   final bool recurring;
+  final Uint8List? referencePhoto;
   final JobStatus status;
   final Uint8List? before;
   final Uint8List? after;
-  final List<({bool contractor, String text})> messages;
+  final List<({bool contractor, String text, Uint8List? image})> messages;
   final int? rating;
   final String review;
   final bool declined;
@@ -70,7 +98,7 @@ class Booking {
     JobStatus? status,
     Uint8List? before,
     Uint8List? after,
-    List<({bool contractor, String text})>? messages,
+    List<({bool contractor, String text, Uint8List? image})>? messages,
     int? rating,
     String? review,
     bool? declined,
@@ -83,6 +111,7 @@ class Booking {
     total: total,
     notes: notes,
     recurring: recurring,
+    referencePhoto: referencePhoto,
     status: status ?? this.status,
     before: before ?? this.before,
     after: clearAfter ? null : after ?? this.after,
@@ -111,11 +140,32 @@ class Properties extends Notifier<List<Property>> {
       '123 Maple St, Toronto',
       'Standard',
       'Use the side gate.',
+      isDefault: true,
     ),
   ];
 
-  void save(int? id, String name, String address, String size, String notes) {
-    final property = Property(id ?? _nextId++, name, address, size, notes);
+  void save(
+    int? id,
+    String name,
+    String address,
+    String size,
+    String notes, {
+    required String type,
+    Uint8List? photo,
+    ({double latitude, double longitude})? pin,
+  }) {
+    final property = Property(
+      id ?? _nextId++,
+      name,
+      address,
+      size,
+      notes,
+      type: type,
+      photo: photo,
+      pin: pin,
+      isDefault:
+          state.isEmpty || state.any((item) => item.id == id && item.isDefault),
+    );
     state = id == null
         ? [...state, property]
         : [
@@ -124,8 +174,18 @@ class Properties extends Notifier<List<Property>> {
           ];
   }
 
-  void remove(int id) =>
-      state = state.where((property) => property.id != id).toList();
+  void setDefault(int id) => state = [
+    for (final property in state) property.withDefault(property.id == id),
+  ];
+
+  void remove(int id) {
+    final remaining = state.where((property) => property.id != id).toList();
+    if (remaining.isNotEmpty &&
+        !remaining.any((property) => property.isDefault)) {
+      remaining[0] = remaining.first.withDefault(true);
+    }
+    state = remaining;
+  }
 }
 
 class Bookings extends Notifier<List<Booking>> {
@@ -155,8 +215,9 @@ class Bookings extends Notifier<List<Booking>> {
     DateTime date,
     double total,
     String notes,
-    bool recurring,
-  ) {
+    bool recurring, {
+    Uint8List? referencePhoto,
+  }) {
     state = [
       Booking(
         id: _nextId++,
@@ -166,6 +227,7 @@ class Bookings extends Notifier<List<Booking>> {
         total: total,
         notes: notes,
         recurring: recurring,
+        referencePhoto: referencePhoto,
       ),
       ...state,
     ];

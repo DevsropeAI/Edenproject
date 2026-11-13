@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart'
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../domain/auth_state.dart';
+import '../data/models/user.dart';
 import '../data/repositories/auth_repository.dart';
 
 import '../../../core/storage/secure_storage.dart';
@@ -48,17 +49,27 @@ class AuthNotifier extends _$AuthNotifier {
   ) async {
     state = const AuthState.loading();
     try {
-      final user = await ref
+      await ref
           .read(authRepositoryProvider)
           .register(name, email, password, role);
       if (ref.mounted) {
-        state = AuthState.authenticated(user);
+        state = const AuthState.unauthenticated();
       }
     } catch (e) {
       if (ref.mounted) {
         state = AuthState.error(e.toString());
       }
     }
+  }
+
+  void updateProfile(User user) {
+    ref.read(authRepositoryProvider).updateProfile(user);
+    state = AuthState.authenticated(user);
+  }
+
+  Future<void> deleteAccount(String email) async {
+    await ref.read(authRepositoryProvider).deleteAccount(email);
+    if (ref.mounted) state = const AuthState.unauthenticated();
   }
 }
 
