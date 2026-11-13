@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../marketplace.dart';
+import 'demo_settings_screen.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../../auth/domain/auth_state.dart';
 
@@ -330,10 +331,13 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   DateTime? _scheduled;
   bool _urgent = false;
   bool _recurring = false;
+  bool _walkway = false;
+  final _coupon = TextEditingController();
 
   @override
   void dispose() {
     _notes.dispose();
+    _coupon.dispose();
     super.dispose();
   }
 
@@ -382,8 +386,13 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     }
     final base = _service.price + (property.size == 'Large' ? 15 : 0);
     final rushFee = _urgent ? 20 : 0;
-    final tax = (base + rushFee) * .13;
-    final total = base + rushFee + tax;
+    final walkwayFee = _service == Service.snow && _walkway ? 12 : 0;
+    final subtotal = base + rushFee + walkwayFee;
+    final discount = _coupon.text.trim().toUpperCase() == 'EDEN10'
+        ? (subtotal * 10).round() / 100
+        : 0;
+    final tax = ((subtotal - discount) * 13).round() / 100;
+    final total = subtotal - discount + tax;
     return MarketPage(
       title: 'Book a service',
       children: [
@@ -424,6 +433,24 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               value: _recurring,
               onChanged: (value) => setState(() => _recurring = value),
             ),
+            if (_service == Service.snow)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Add walkway clearing · CAD 12'),
+                value: _walkway,
+                onChanged: (value) => setState(() => _walkway = value ?? false),
+              ),
+            TextField(
+              controller: _coupon,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Promo code',
+                helperText: 'Demo code: EDEN10',
+                errorText: _coupon.text.trim().isNotEmpty && discount == 0
+                    ? 'Code is not recognized'
+                    : null,
+              ),
+            ),
             _field(_notes, 'Instructions for the contractor'),
           ],
         ),
@@ -435,6 +462,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
             ),
             Text('Service  ${_money.format(base)}'),
             if (_urgent) Text('Urgent fee  ${_money.format(rushFee)}'),
+            if (walkwayFee > 0) Text('Walkway clearing  '),
+            if (discount > 0) Text('Promo discount  -'),
             Text('Estimated tax  ${_money.format(tax)}'),
             const Divider(),
             Text(
@@ -457,7 +486,11 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             _service,
                             _scheduled!,
                             total,
-                            _notes.text.trim(),
+                            [
+                              if (walkwayFee > 0) 'Includes walkway clearing.',
+                              if (_notes.text.trim().isNotEmpty)
+                                _notes.text.trim(),
+                            ].join(' '),
                             _recurring,
                           );
                       context.go('/bookings');
@@ -479,7 +512,11 @@ class BookingListScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final bookings = ref.watch(bookingsProvider);
     final visible = bookings.where(
-      (booking) => !contractor || !booking.declined,
+      (booking) =>
+          !contractor ||
+          (!booking.declined &&
+              (booking.status != JobStatus.searching ||
+                  ref.watch(demoSettingsProvider).available)),
     );
     return MarketPage(
       title: contractor ? 'Eden Contractor' : 'My bookings',
@@ -959,6 +996,7 @@ class ProfileScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authProvider);
+    final registration = ref.watch(registrationDetailsProvider);
     final user = auth.maybeWhen(
       authenticated: (user) => user,
       orElse: () => null,
@@ -975,6 +1013,25 @@ class ProfileScreen extends ConsumerWidget {
         MarketCard(
           children: [
             if (user != null) Text(user.email),
+            if (registration.phone.isNotEmpty) Text(registration.phone),
+            if (contractor && registration.area.isNotEmpty)
+              Text(registration.area),
+            if (contractor && registration.service.isNotEmpty)
+              Text(registration.service),
+            for (final section in [
+              SettingsSection.support,
+              SettingsSection.preferences,
+              if (contractor) SettingsSection.wallet,
+              if (contractor) SettingsSection.verification,
+              if (!contractor) SettingsSection.automatic,
+            ])
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(section.icon),
+                title: Text(section.label),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/settings/${section.name}'),
+              ),
             if (!contractor)
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -1001,6 +1058,8 @@ class ProfileScreen extends ConsumerWidget {
                   await ref.read(authProvider.notifier).logout();
                   if (!context.mounted) return;
                   ref.invalidate(bookingsProvider);
+                  ref.invalidate(registrationDetailsProvider);
+                  ref.invalidate(demoSettingsProvider);
                   ref.invalidate(propertiesProvider);
                   context.go('/login');
                 } catch (_) {

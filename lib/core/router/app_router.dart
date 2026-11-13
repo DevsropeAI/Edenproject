@@ -1,5 +1,9 @@
 import 'package:go_router/go_router.dart';
 
+import '../../features/home/presentation/screens/demo_settings_screen.dart';
+
+import '../../features/auth/presentation/screens/account_form_screen.dart';
+
 import '../../features/auth/presentation/screens/onboarding_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/customer_register_screen.dart';
@@ -14,6 +18,11 @@ class AppRouter {
   static final router = GoRouter(
     initialLocation: '/login',
     routes: [
+      GoRoute(
+        path: '/reset-password',
+        builder: (context, state) =>
+            const AccountFormScreen(mode: AuthMode.reset),
+      ),
       GoRoute(
         path: '/onboarding',
         builder: (context, state) => const OnboardingScreen(),
@@ -69,6 +78,19 @@ class AppRouter {
           id: int.tryParse(state.pathParameters['id']!),
           contractor: state.extra == true,
         ),
+      ),
+      GoRoute(
+        path: '/settings/:section',
+        builder: (context, state) {
+          final section = SettingsSection.values
+              .where(
+                (section) => section.name == state.pathParameters['section'],
+              )
+              .firstOrNull;
+          return section == null
+              ? const ProfileScreen()
+              : DemoSettingsScreen(section: section);
+        },
       ),
       GoRoute(
         path: '/profile',
