@@ -1,3 +1,8 @@
+import '../../../../core/theme/app_dark_theme.dart';
+import '../../../../core/theme/app_spacing.dart';
+import '../../../../core/widgets/app_background.dart';
+import '../../../../core/widgets/glass_controls.dart';
+
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -8,7 +13,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../../auth/providers/auth_provider.dart';
-import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../auth/domain/auth_state.dart';
 import '../../marketplace.dart';
 import 'demo_settings_screen.dart';
@@ -44,52 +48,102 @@ class MarketPage extends StatelessWidget {
     required this.children,
     this.nav,
     this.actions,
+    this.dark = false,
+    this.showRibbon = false,
+    this.darkNavigation,
   });
   final String title;
   final List<Widget> children;
   final int? nav;
   final List<Widget>? actions;
+  final bool dark;
+  final bool showRibbon;
+  final Widget? darkNavigation;
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF6F8F5),
-    appBar: AppBar(title: Text(title), actions: actions),
-    bottomNavigationBar: nav == null
-        ? null
-        : NavigationBar(
-            selectedIndex: nav!,
-            onDestinationSelected: (index) =>
-                context.go(['/customer-home', '/bookings', '/profile'][index]),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                label: 'Home',
+  Widget _darkPage(BuildContext context) => Theme(
+    data: EdenDarkTheme.data,
+    child: Scaffold(
+      extendBody: true,
+      appBar: AppBar(title: Text(title), actions: actions),
+      bottomNavigationBar: darkNavigation,
+      body: AppBackground(
+        showRibbon: showRibbon,
+        child: SafeArea(
+          bottom: darkNavigation == null,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: EdenSpacing.content),
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(
+                  EdenSpacing.screen,
+                  EdenSpacing.screen,
+                  EdenSpacing.screen,
+                  darkNavigation == null
+                      ? EdenSpacing.screen
+                      : MediaQuery.viewPaddingOf(context).bottom +
+                            EdenSpacing.control * 2,
+                ),
+                children: [
+                  for (final child in children)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: EdenSpacing.gap),
+                      child: child,
+                    ),
+                ],
               ),
-              NavigationDestination(
-                icon: Icon(Icons.calendar_today_outlined),
-                label: 'Bookings',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                label: 'Profile',
-              ),
-            ],
+            ),
           ),
-    body: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 820),
-        child: ListView(
-          padding: EdgeInsets.all(
-            MediaQuery.sizeOf(context).width < 420 ? 16 : 24,
-          ),
-          children: [
-            for (final child in children)
-              Padding(padding: const EdgeInsets.only(bottom: 16), child: child),
-          ],
         ),
       ),
     ),
   );
+
+  @override
+  Widget build(BuildContext context) => dark
+      ? _darkPage(context)
+      : Scaffold(
+          backgroundColor: const Color(0xFFF6F8F5),
+          appBar: AppBar(title: Text(title), actions: actions),
+          bottomNavigationBar: nav == null
+              ? null
+              : NavigationBar(
+                  selectedIndex: nav!,
+                  onDestinationSelected: (index) => context.go(
+                    ['/customer-home', '/bookings', '/profile'][index],
+                  ),
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.home_outlined),
+                      label: 'Home',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.calendar_today_outlined),
+                      label: 'Bookings',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.person_outline),
+                      label: 'Profile',
+                    ),
+                  ],
+                ),
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 820),
+              child: ListView(
+                padding: EdgeInsets.all(
+                  MediaQuery.sizeOf(context).width < 420 ? 16 : 24,
+                ),
+                children: [
+                  for (final child in children)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: child,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
 }
 
 class MarketBanner extends StatelessWidget {
@@ -99,63 +153,90 @@ class MarketBanner extends StatelessWidget {
   final IconData icon;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 420 ? 18 : 26),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(colors: [_green, Color(0xFF317754)]),
-      borderRadius: BorderRadius.circular(24),
-    ),
-    child: Row(
-      children: [
-        Expanded(
+  Widget build(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? GlassCard(
+          blur: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                title,
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(subtitle, style: const TextStyle(color: Colors.white)),
+              Icon(icon),
+              const SizedBox(height: EdenSpacing.screen),
+              Text(title, style: Theme.of(context).textTheme.headlineLarge),
+              const SizedBox(height: EdenSpacing.sm),
+              Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
             ],
           ),
-        ),
-        const SizedBox(width: 16),
-        Icon(icon, color: const Color(0xFFC1E9CE), size: 42),
-      ],
-    ),
-  );
+        )
+      : Container(
+          padding: EdgeInsets.all(
+            MediaQuery.sizeOf(context).width < 420 ? 18 : 26,
+          ),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(colors: [_green, Color(0xFF317754)]),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.headlineMedium
+                          ?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(subtitle, style: const TextStyle(color: Colors.white)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              Icon(icon, color: const Color(0xFFC1E9CE), size: 42),
+            ],
+          ),
+        );
 }
 
 class MarketCard extends StatelessWidget {
-  const MarketCard({super.key, required this.children});
+  const MarketCard({super.key, required this.children, this.solid = false});
+  final bool solid;
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.white,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(20),
-      side: const BorderSide(color: Color(0xFFDDE7DE)),
-    ),
-    clipBehavior: Clip.antiAlias,
-    child: Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final child in children)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 5),
-              child: child,
-            ),
-        ],
-      ),
-    ),
+  Widget build(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? GlassCard(
+          solid: solid,
+          child: SizedBox(width: double.infinity, child: _contents()),
+        )
+      : Material(
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFFDDE7DE)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            child: _contents(),
+          ),
+        );
+
+  Widget _contents() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      for (final child in children)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: EdenSpacing.xs),
+          child: child,
+        ),
+    ],
   );
 }
 
@@ -728,6 +809,7 @@ class BookingListScreen extends ConsumerWidget {
     return MarketPage(
       title: contractor ? 'Eden Contractor' : 'My bookings',
       nav: contractor ? null : 1,
+      dark: contractor,
       actions: contractor
           ? [
               IconButton(
@@ -757,9 +839,37 @@ class BookingListScreen extends ConsumerWidget {
                 available ? 'Available for jobs' : 'Offline',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
-              Text(
-                '${visible.where((job) => job.status == JobStatus.searching).length} available · '
-                '${visible.where((job) => job.status == JobStatus.completed).length} completed',
+              Wrap(
+                spacing: EdenSpacing.gap,
+                runSpacing: EdenSpacing.gap,
+                children: [
+                  for (final (label, count) in [
+                    (
+                      'Available',
+                      visible
+                          .where((job) => job.status == JobStatus.searching)
+                          .length,
+                    ),
+                    (
+                      'Active',
+                      visible
+                          .where(
+                            (job) =>
+                                job.status != JobStatus.searching &&
+                                job.status != JobStatus.completed &&
+                                job.status != JobStatus.cancelled,
+                          )
+                          .length,
+                    ),
+                    (
+                      'Completed',
+                      visible
+                          .where((job) => job.status == JobStatus.completed)
+                          .length,
+                    ),
+                  ])
+                    Chip(label: Text('$count $label')),
+                ],
               ),
               Wrap(
                 spacing: 8,
@@ -784,7 +894,17 @@ class BookingListScreen extends ConsumerWidget {
             ],
           ),
         if (visible.isEmpty)
-          const MarketCard(children: [Text('Nothing to show yet.')]),
+          if (contractor)
+            EmptyState(
+              icon: Icons.inbox_outlined,
+              message: 'No jobs to show right now.',
+              action: TextButton(
+                onPressed: () => context.push('/profile', extra: true),
+                child: const Text('Open profile'),
+              ),
+            )
+          else
+            const MarketCard(children: [Text('Nothing to show yet.')]),
         for (final (title, statuses)
             in (contractor
                 ? [
@@ -834,10 +954,22 @@ class BookingListScreen extends ConsumerWidget {
                     spacing: 12,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Chip(
-                        label: Text(booking.status.label),
-                        backgroundColor: _mint,
-                      ),
+                      if (contractor)
+                        StatusChip(
+                          label: booking.status.label,
+                          status: switch (booking.status) {
+                            JobStatus.searching => EdenStatus.pending,
+                            JobStatus.completed => EdenStatus.complete,
+                            JobStatus.enRoute ||
+                            JobStatus.working => EdenStatus.live,
+                            _ => EdenStatus.neutral,
+                          },
+                        )
+                      else
+                        Chip(
+                          label: Text(booking.status.label),
+                          backgroundColor: _mint,
+                        ),
                       TextButton(
                         onPressed: () => context.push(
                           '/${contractor ? 'job-details' : 'bookings'}/${booking.id}',

@@ -429,6 +429,8 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
     };
     return MarketPage(
       title: 'Eden',
+      dark: !_reset,
+      showRibbon: !_reset,
       children: [
         Center(
           child: ConstrainedBox(
@@ -445,6 +447,7 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                 Form(
                   key: _form,
                   child: MarketCard(
+                    solid: true,
                     children: [
                       if (!_login && !_reset)
                         _field(_name, 'Full name', Icons.person_outline),

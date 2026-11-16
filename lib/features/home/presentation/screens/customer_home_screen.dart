@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/theme/app_spacing.dart';
+import '../../../../core/widgets/glass_controls.dart';
 import '../../marketplace.dart';
 import 'marketplace_screens.dart';
 
@@ -11,50 +13,146 @@ class CustomerHomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final catalog = ref.watch(serviceCatalogProvider);
+    final active = ref
+        .watch(bookingsProvider)
+        .where(
+          (booking) =>
+              booking.status != JobStatus.completed &&
+              booking.status != JobStatus.cancelled,
+        )
+        .firstOrNull;
+    final services = [
+      (Service.snow, Icons.ac_unit, 'Driveway and entrance'),
+      (Service.lawn, Icons.grass, 'Lawn maintenance'),
+      (Service.cleaning, Icons.cleaning_services_outlined, 'Home cleaning'),
+    ].where((item) => catalog.value?.containsKey(item.$1) == true);
     return MarketPage(
       title: 'Eden',
-      nav: 0,
+      dark: true,
+      darkNavigation: GlassBottomNav(
+        selectedIndex: 0,
+        onSelected: (index) {
+          if (index == 0) return;
+          if (index == 2) {
+            context.push('/settings/support');
+          } else {
+            context.go(index == 1 ? '/bookings' : '/profile');
+          }
+        },
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long_outlined),
+            label: 'Orders',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.support_agent),
+            label: 'Support',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            label: 'Profile',
+          ),
+        ],
+      ),
       children: [
         const MarketBanner(
-          'Home services made easy',
-          'Get a quote and book help for your home or property.',
-          Icons.eco_outlined,
+          'What do you need done today?',
+          'Book and manage services for your home.',
+          Icons.home_work_outlined,
         ),
-        Text('Explore services', style: Theme.of(context).textTheme.titleLarge),
-        if (catalog.isLoading) const LinearProgressIndicator(),
+        if (active != null)
+          MarketCard(
+            children: [
+              const Text('Active order'),
+              Text(active.service.label),
+              StatusChip(
+                label: active.status.label,
+                status: active.status == JobStatus.searching
+                    ? EdenStatus.pending
+                    : active.status == JobStatus.enRoute ||
+                          active.status == JobStatus.working
+                    ? EdenStatus.live
+                    : EdenStatus.neutral,
+              ),
+              TextButton(
+                onPressed: () => context.push('/bookings/${active.id}'),
+                child: const Text('Track order'),
+              ),
+            ],
+          ),
+        Builder(
+          builder: (context) => Text(
+            'Explore services',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+        ),
+        if (catalog.isLoading)
+          const ShimmerBox(height: EdenSpacing.control * 2),
         if (catalog.hasError)
           TextButton(
             onPressed: () => ref.invalidate(serviceCatalogProvider),
             child: const Text('Retry loading services'),
           ),
         if (catalog.value?.isEmpty == true)
-          const Text('No services are currently available.'),
-        for (final (service, icon, description) in [
-          (Service.snow, Icons.ac_unit, 'Clear your driveway and entrance'),
-          (Service.lawn, Icons.grass, 'Keep your lawn neat and tidy'),
-          (
-            Service.cleaning,
-            Icons.cleaning_services_outlined,
-            'Give your home a fresh start',
-          ),
-        ])
-          if (catalog.value?.containsKey(service) == true)
-            MarketCard(
-              children: [
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(child: Icon(icon)),
-                  title: Text(service.label),
-                  subtitle: Text(description),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => context.push('/properties', extra: service),
-                ),
-              ],
+          EmptyState(
+            icon: Icons.home_repair_service_outlined,
+            message: 'No services are available right now.',
+            action: TextButton(
+              onPressed: () => ref.invalidate(serviceCatalogProvider),
+              child: const Text('Refresh services'),
             ),
-        OutlinedButton.icon(
+          ),
+        if (services.isNotEmpty)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth < 300 ? 1 : 2;
+              final width =
+                  (constraints.maxWidth - EdenSpacing.gap * (columns - 1)) /
+                  columns;
+              return Wrap(
+                spacing: EdenSpacing.gap,
+                runSpacing: EdenSpacing.gap,
+                children: [
+                  for (final (service, icon, description) in services)
+                    SizedBox(
+                      width: width,
+                      child: GlassCard(
+                        child: InkWell(
+                          onTap: () =>
+                              context.push('/properties', extra: service),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              minHeight: EdenSpacing.control,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(icon),
+                                const SizedBox(height: EdenSpacing.gap),
+                                Text(
+                                  service.label,
+                                  style: Theme.of(context).textTheme.labelLarge,
+                                ),
+                                const SizedBox(height: EdenSpacing.xs),
+                                Text(
+                                  description,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        SecondaryButton(
           onPressed: () => context.push('/properties'),
-          icon: const Icon(Icons.home_work_outlined),
-          label: const Text('Manage properties'),
+          icon: Icons.home_work_outlined,
+          label: 'Manage properties',
         ),
       ],
     );
