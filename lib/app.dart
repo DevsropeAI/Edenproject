@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'features/home/marketplace.dart';
 import 'core/theme/app_theme.dart';
+import 'core/theme/app_dark_theme.dart';
 import 'core/router/app_router.dart';
 
 class EdenApp extends ConsumerWidget {
@@ -19,6 +20,8 @@ class EdenApp extends ConsumerWidget {
       scaffoldMessengerKey: _messenger,
       title: 'Eden',
       theme: AppTheme.lightTheme,
+      darkTheme: EdenDarkTheme.data,
+      themeMode: ThemeMode.light,
       routerConfig: ref.watch(appRouterProvider),
       debugShowCheckedModeBanner: false,
     );

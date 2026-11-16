@@ -1,3 +1,8 @@
+import '../../../../core/theme/app_dark_theme.dart';
+import '../../../../core/theme/app_spacing.dart';
+import '../../../../core/widgets/app_background.dart';
+import '../../../../core/widgets/glass_controls.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -194,11 +199,218 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
     decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon)),
   );
 
+  Widget _buildLogin(bool restoring) => Theme(
+    data: EdenDarkTheme.data,
+    child: Scaffold(
+      body: AppBackground(
+        showRibbon: true,
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              padding: const EdgeInsets.all(EdenSpacing.screen),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: (constraints.maxHeight - EdenSpacing.large).clamp(
+                    0.0,
+                    double.infinity,
+                  ),
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: EdenSpacing.content,
+                    ),
+                    child: Builder(
+                      builder: (context) {
+                        final theme = Theme.of(context);
+                        final reducedMotion = MediaQuery.disableAnimationsOf(
+                          context,
+                        );
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0, end: 1),
+                          duration: reducedMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 280),
+                          curve: Curves.easeOutCubic,
+                          builder: (context, value, child) => Opacity(
+                            opacity: value,
+                            child: Transform.translate(
+                              offset: Offset(0, (1 - value) * EdenSpacing.gap),
+                              child: child,
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Align(
+                                alignment: Alignment.centerLeft,
+                                child: GlassCard(
+                                  blur: true,
+                                  child: Icon(
+                                    Icons.home_work_outlined,
+                                    semanticLabel: 'Eden',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: EdenSpacing.section),
+                              Text(
+                                'Welcome to Eden',
+                                style: theme.textTheme.headlineLarge,
+                              ),
+                              const SizedBox(height: EdenSpacing.sm),
+                              Text(
+                                'Sign in to book or manage home services.',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                              const SizedBox(height: EdenSpacing.section),
+                              GlassCard(
+                                solid: true,
+                                child: Form(
+                                  key: _form,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      _field(
+                                        _email,
+                                        'Email address',
+                                        Icons.mail_outline,
+                                        keyboard: TextInputType.emailAddress,
+                                        validate: (value) =>
+                                            RegExp(
+                                              r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
+                                            ).hasMatch(value)
+                                            ? null
+                                            : 'Enter a valid email address',
+                                      ),
+                                      const SizedBox(height: EdenSpacing.gap),
+                                      GlassTextField(
+                                        controller: _password,
+                                        enabled: !_busy,
+                                        obscureText: _obscure,
+                                        onSubmitted: (_) => _submit(),
+                                        validator: (value) =>
+                                            (value ?? '').trim().isEmpty
+                                            ? 'Enter your password'
+                                            : null,
+                                        decoration: InputDecoration(
+                                          labelText: 'Password',
+                                          prefixIcon: const Icon(
+                                            Icons.lock_outline,
+                                          ),
+                                          suffixIcon: IconButton(
+                                            tooltip: _obscure
+                                                ? 'Show password'
+                                                : 'Hide password',
+                                            icon: Icon(
+                                              _obscure
+                                                  ? Icons.visibility_outlined
+                                                  : Icons
+                                                        .visibility_off_outlined,
+                                            ),
+                                            onPressed: () => setState(
+                                              () => _obscure = !_obscure,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: TextButton(
+                                          onPressed: _busy
+                                              ? null
+                                              : () => context.push(
+                                                  '/reset-password',
+                                                ),
+                                          child: const Text('Forgot password?'),
+                                        ),
+                                      ),
+                                      if (_feedback case final feedback?)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: EdenSpacing.gap,
+                                          ),
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Icon(
+                                                Icons.error_outline,
+                                                color: theme.colorScheme.error,
+                                              ),
+                                              const SizedBox(
+                                                width: EdenSpacing.sm,
+                                              ),
+                                              Expanded(
+                                                child: Text(
+                                                  feedback,
+                                                  style: TextStyle(
+                                                    color:
+                                                        theme.colorScheme.error,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      PrimaryButton(
+                                        onPressed: _busy || restoring
+                                            ? null
+                                            : _submit,
+                                        child: _busy || restoring
+                                            ? const SizedBox.square(
+                                                dimension: EdenSpacing.section,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      semanticsLabel:
+                                                          'Loading sign-in',
+                                                    ),
+                                              )
+                                            : const Text('Sign in'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: EdenSpacing.section),
+                              SecondaryButton(
+                                onPressed: _busy
+                                    ? null
+                                    : () => context.push('/register/customer'),
+                                icon: Icons.home_outlined,
+                                label: 'Create customer account',
+                              ),
+                              const SizedBox(height: EdenSpacing.screen),
+                              SecondaryButton(
+                                onPressed: _busy
+                                    ? null
+                                    : () =>
+                                          context.push('/register/contractor'),
+                                icon: Icons.handyman_outlined,
+                                label: 'Create contractor account',
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
   @override
   Widget build(BuildContext context) {
     final restoring = ref
         .watch(authProvider)
         .maybeWhen(initial: () => true, orElse: () => false);
+    if (_login) return _buildLogin(restoring);
     final verification = !_login && !_reset
         ? ref.watch(_phoneVerificationProvider)
         : null;
