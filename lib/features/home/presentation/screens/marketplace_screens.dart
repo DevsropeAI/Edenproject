@@ -1,3 +1,4 @@
+import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_dark_theme.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/widgets/app_background.dart';
@@ -41,6 +42,84 @@ const _mint = Color(0xFFEAF5ED);
 final _money = NumberFormat.simpleCurrency(name: 'CAD');
 final _date = DateFormat('EEE, MMM d • h:mm a');
 
+class CustomerNavigation extends StatelessWidget {
+  const CustomerNavigation({super.key, required this.index});
+  final int index;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    heightFactor: 1,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: EdenSpacing.content),
+      child: GlassBottomNav(
+        selectedIndex: index,
+        onSelected: (selected) {
+          if (selected == index) return;
+          if (selected == 2) {
+            context.push('/settings/support');
+          } else {
+            context.go(
+              [
+                '/customer-home',
+                '/bookings',
+                '/settings/support',
+                '/profile',
+              ][selected],
+            );
+          }
+        },
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long_outlined),
+            label: 'Orders',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.support_agent),
+            label: 'Support',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            label: 'Profile',
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Future<T?> showCustomerDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool? dark = true,
+}) => showDialog<T>(
+  context: context,
+  builder: (context) => Consumer(
+    builder: (context, ref, _) {
+      final useDark = dark ?? _customerTheme(ref);
+      return useDark
+          ? Theme(
+              data: EdenDarkTheme.data,
+              child: Builder(builder: builder),
+            )
+          : builder(context);
+    },
+  ),
+);
+
+bool _customerTheme(WidgetRef ref) => ref
+    .watch(authProvider)
+    .maybeWhen(
+      authenticated: (user) => user.role == 'customer',
+      orElse: () => false,
+    );
+EdenStatus _bookingStatus(JobStatus status) => switch (status) {
+  JobStatus.searching => EdenStatus.pending,
+  JobStatus.completed => EdenStatus.complete,
+  JobStatus.enRoute || JobStatus.working => EdenStatus.live,
+  _ => EdenStatus.neutral,
+};
+
 class MarketPage extends StatelessWidget {
   const MarketPage({
     super.key,
@@ -49,6 +128,8 @@ class MarketPage extends StatelessWidget {
     this.nav,
     this.actions,
     this.dark = false,
+    this.customerTheme = false,
+    this.customerTab,
     this.showRibbon = false,
     this.darkNavigation,
   });
@@ -57,6 +138,8 @@ class MarketPage extends StatelessWidget {
   final int? nav;
   final List<Widget>? actions;
   final bool dark;
+  final bool customerTheme;
+  final int? customerTab;
   final bool showRibbon;
   final Widget? darkNavigation;
 
@@ -65,11 +148,25 @@ class MarketPage extends StatelessWidget {
     child: Scaffold(
       extendBody: true,
       appBar: AppBar(title: Text(title), actions: actions),
-      bottomNavigationBar: darkNavigation,
+      bottomNavigationBar:
+          darkNavigation ??
+          (customerTab == null
+              ? null
+              : CustomerNavigation(index: customerTab!)),
       body: AppBackground(
         showRibbon: showRibbon,
+        mainBackdrop: switch (customerTab ??
+            (darkNavigation is CustomerNavigation
+                ? (darkNavigation as CustomerNavigation).index
+                : null)) {
+          0 => MainBackdrop.home,
+          1 => MainBackdrop.orders,
+          2 => MainBackdrop.support,
+          3 => MainBackdrop.profile,
+          _ => null,
+        },
         child: SafeArea(
-          bottom: darkNavigation == null,
+          bottom: darkNavigation == null && customerTab == null,
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: EdenSpacing.content),
@@ -78,7 +175,7 @@ class MarketPage extends StatelessWidget {
                   EdenSpacing.screen,
                   EdenSpacing.screen,
                   EdenSpacing.screen,
-                  darkNavigation == null
+                  darkNavigation == null && customerTab == null
                       ? EdenSpacing.screen
                       : MediaQuery.viewPaddingOf(context).bottom +
                             EdenSpacing.control * 2,
@@ -99,7 +196,14 @@ class MarketPage extends StatelessWidget {
   );
 
   @override
-  Widget build(BuildContext context) => dark
+  Widget build(BuildContext context) => customerTheme
+      ? Consumer(
+          builder: (context, ref, _) =>
+              _buildPage(context, _customerTheme(ref)),
+        )
+      : _buildPage(context, dark);
+
+  Widget _buildPage(BuildContext context, bool useDark) => useDark
       ? _darkPage(context)
       : Scaffold(
           backgroundColor: const Color(0xFFF6F8F5),
@@ -202,6 +306,18 @@ class MarketBanner extends StatelessWidget {
         );
 }
 
+class MarketHeading extends StatelessWidget {
+  const MarketHeading(this.label, {super.key, this.compact = false});
+  final String label;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Text(label, style: compact ? text.titleMedium : text.titleLarge);
+  }
+}
+
 class MarketCard extends StatelessWidget {
   const MarketCard({super.key, required this.children, this.solid = false});
   final bool solid;
@@ -248,6 +364,7 @@ class PropertiesScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final properties = ref.watch(propertiesProvider);
     return MarketPage(
+      dark: true,
       title: 'Properties',
       children: [
         const MarketBanner(
@@ -258,7 +375,7 @@ class PropertiesScreen extends ConsumerWidget {
         Align(
           alignment: Alignment.centerLeft,
           child: FilledButton.icon(
-            onPressed: () => showDialog<void>(
+            onPressed: () => showCustomerDialog<void>(
               context: context,
               builder: (_) => const _PropertyEditor(),
             ),
@@ -273,10 +390,7 @@ class PropertiesScreen extends ConsumerWidget {
         for (final property in properties)
           MarketCard(
             children: [
-              Text(
-                property.name,
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+              MarketHeading(property.name),
               Text(property.address),
               Text(
                 '${property.type} · ${property.size}${property.isDefault ? ' · Default' : ''}',
@@ -302,7 +416,7 @@ class PropertiesScreen extends ConsumerWidget {
                     child: const Text('Book a service'),
                   ),
                   OutlinedButton(
-                    onPressed: () => showDialog<void>(
+                    onPressed: () => showCustomerDialog<void>(
                       context: context,
                       builder: (_) => _PropertyEditor(property: property),
                     ),
@@ -310,7 +424,7 @@ class PropertiesScreen extends ConsumerWidget {
                   ),
                   TextButton(
                     onPressed: () async {
-                      final remove = await showDialog<bool>(
+                      final remove = await showCustomerDialog<bool>(
                         context: context,
                         builder: (dialogContext) => AlertDialog(
                           title: Text('Remove ${property.name}?'),
@@ -453,7 +567,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                       lng != null &&
                       lat.abs() <= 90 &&
                       lng.abs() <= 180;
-                  final pin = await showDialog<LatLng>(
+                  final pin = await showCustomerDialog<LatLng>(
                     context: context,
                     builder: (_) => AlertDialog(
                       title: const Text('Property location'),
@@ -564,6 +678,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   Future<void> _pickSchedule() async {
     final now = DateTime.now();
     final day = await showDatePicker(
+      builder: (_, child) => Theme(data: EdenDarkTheme.data, child: child!),
       context: context,
       initialDate: _scheduled ?? now,
       firstDate: DateUtils.dateOnly(now),
@@ -571,6 +686,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     );
     if (!mounted || day == null) return;
     final time = await showTimePicker(
+      builder: (_, child) => Theme(data: EdenDarkTheme.data, child: child!),
       context: context,
       initialTime: TimeOfDay.fromDateTime(
         _scheduled ?? now.add(const Duration(hours: 1)),
@@ -600,6 +716,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         .firstOrNull;
     if (property == null) {
       return const MarketPage(
+        dark: true,
         title: 'Book a service',
         children: [Text('Property unavailable.')],
       );
@@ -608,6 +725,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     final options = catalog.value ?? const <Service, int>{};
     if (options.isEmpty) {
       return MarketPage(
+        dark: true,
         title: 'Book a service',
         children: [
           if (catalog.isLoading)
@@ -633,6 +751,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     final tax = ((subtotal - discount) * 13).round() / 100;
     final total = subtotal - discount + tax;
     return MarketPage(
+      dark: true,
       title: 'Book a service',
       children: [
         MarketBanner(
@@ -641,6 +760,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           Icons.event_available_outlined,
         ),
         MarketCard(
+          solid: true,
           children: [
             DropdownButtonFormField<Service>(
               initialValue: service,
@@ -705,11 +825,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           ],
         ),
         MarketCard(
+          solid: true,
           children: [
-            Text(
-              'Instant quote',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            MarketHeading('Instant quote'),
             Text('Service  ${_money.format(base)}'),
             if (_urgent) Text('Urgent fee  ${_money.format(rushFee)}'),
             if (walkwayFee > 0)
@@ -718,10 +836,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               Text('Promo discount  -${_money.format(discount)}'),
             Text('Estimated tax  ${_money.format(tax)}'),
             const Divider(),
-            Text(
-              'Total  ${_money.format(total)} CAD',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            MarketHeading('Total  ${_money.format(total)} CAD'),
             const Text('Payment is available after the booking is completed.'),
             FilledButton(
               onPressed: _scheduled == null
@@ -731,7 +846,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                         setState(() => _scheduled = null);
                         return;
                       }
-                      final confirmed = await showDialog<bool>(
+                      final confirmed = await showCustomerDialog<bool>(
                         context: context,
                         builder: (dialog) => AlertDialog(
                           title: const Text('Review checkout'),
@@ -809,7 +924,8 @@ class BookingListScreen extends ConsumerWidget {
     return MarketPage(
       title: contractor ? 'Eden Contractor' : 'My bookings',
       nav: contractor ? null : 1,
-      dark: contractor,
+      dark: true,
+      darkNavigation: contractor ? null : const CustomerNavigation(index: 1),
       actions: contractor
           ? [
               IconButton(
@@ -835,9 +951,9 @@ class BookingListScreen extends ConsumerWidget {
         if (contractor)
           MarketCard(
             children: [
-              Text(
+              MarketHeading(
                 available ? 'Available for jobs' : 'Offline',
-                style: Theme.of(context).textTheme.titleMedium,
+                compact: true,
               ),
               Wrap(
                 spacing: EdenSpacing.gap,
@@ -904,7 +1020,14 @@ class BookingListScreen extends ConsumerWidget {
               ),
             )
           else
-            const MarketCard(children: [Text('Nothing to show yet.')]),
+            EmptyState(
+              icon: Icons.receipt_long_outlined,
+              message: 'Your orders will appear here after you book a service.',
+              action: TextButton(
+                onPressed: () => context.go('/customer-home'),
+                child: const Text('Browse services'),
+              ),
+            ),
         for (final (title, statuses)
             in (contractor
                 ? [
@@ -936,16 +1059,13 @@ class BookingListScreen extends ConsumerWidget {
                     ),
                   ]))
           if (visible.any((booking) => statuses.contains(booking.status))) ...[
-            Text(title, style: Theme.of(context).textTheme.titleLarge),
+            MarketHeading(title),
             for (final booking in visible.where(
               (booking) => statuses.contains(booking.status),
             ))
               MarketCard(
                 children: [
-                  Text(
-                    booking.service.label,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
+                  MarketHeading(booking.service.label, compact: true),
                   Text(booking.property.address),
                   Text(
                     '${_date.format(booking.date)} · ${_money.format(booking.total)} CAD',
@@ -954,22 +1074,10 @@ class BookingListScreen extends ConsumerWidget {
                     spacing: 12,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      if (contractor)
-                        StatusChip(
-                          label: booking.status.label,
-                          status: switch (booking.status) {
-                            JobStatus.searching => EdenStatus.pending,
-                            JobStatus.completed => EdenStatus.complete,
-                            JobStatus.enRoute ||
-                            JobStatus.working => EdenStatus.live,
-                            _ => EdenStatus.neutral,
-                          },
-                        )
-                      else
-                        Chip(
-                          label: Text(booking.status.label),
-                          backgroundColor: _mint,
-                        ),
+                      StatusChip(
+                        label: booking.status.label,
+                        status: _bookingStatus(booking.status),
+                      ),
                       TextButton(
                         onPressed: () => context.push(
                           '/${contractor ? 'job-details' : 'bookings'}/${booking.id}',
@@ -1037,8 +1145,9 @@ class BookingDetailsScreen extends ConsumerWidget {
         .where((item) => item.id == id)
         .firstOrNull;
     if (booking == null) {
-      return const MarketPage(
+      return MarketPage(
         title: 'Booking details',
+        dark: !contractor,
         children: [Text('Booking unavailable.')],
       );
     }
@@ -1051,6 +1160,7 @@ class BookingDetailsScreen extends ConsumerWidget {
     );
     return MarketPage(
       title: contractor ? 'Job details' : 'Booking details',
+      dark: !contractor,
       actions: [
         TextButton(
           onPressed: () =>
@@ -1066,7 +1176,13 @@ class BookingDetailsScreen extends ConsumerWidget {
         ),
         MarketCard(
           children: [
-            Chip(label: Text(booking.status.label), backgroundColor: _mint),
+            if (contractor)
+              Chip(label: Text(booking.status.label), backgroundColor: _mint)
+            else
+              StatusChip(
+                label: booking.status.label,
+                status: _bookingStatus(booking.status),
+              ),
             Text(_date.format(booking.date)),
             Text('${_money.format(booking.total)} CAD'),
             if (booking.recurring) const Text('Weekly service requested'),
@@ -1074,7 +1190,8 @@ class BookingDetailsScreen extends ConsumerWidget {
               OutlinedButton.icon(
                 icon: const Icon(Icons.map_outlined),
                 label: const Text('View property on map'),
-                onPressed: () => showDialog<void>(
+                onPressed: () => showCustomerDialog<void>(
+                  dark: !contractor,
                   context: context,
                   builder: (_) => AlertDialog(
                     title: Text(booking.property.name),
@@ -1112,10 +1229,7 @@ class BookingDetailsScreen extends ConsumerWidget {
         if (!contractor && booking.status == JobStatus.completed)
           MarketCard(
             children: [
-              Text(
-                'Booking summary',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+              MarketHeading('Booking summary'),
               Text('Booking #${booking.id} · ${booking.service.label}'),
               Text('Quoted total: ${_money.format(booking.total)} CAD'),
               TextButton(
@@ -1137,10 +1251,7 @@ class BookingDetailsScreen extends ConsumerWidget {
                 ].contains(booking.status)))
           MarketCard(
             children: [
-              Text(
-                'Work photos',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+              MarketHeading('Work photos'),
               for (final (label, bytes) in [
                 ('Before', booking.before),
                 ('After', booking.after),
@@ -1282,7 +1393,8 @@ class BookingDetailsScreen extends ConsumerWidget {
             booking.status == JobStatus.completed &&
             booking.rating == null)
           FilledButton(
-            onPressed: () => showDialog<void>(
+            onPressed: () => showCustomerDialog<void>(
+              dark: !contractor,
               context: context,
               builder: (_) => _ReviewDialog(id: booking.id),
             ),
@@ -1290,25 +1402,30 @@ class BookingDetailsScreen extends ConsumerWidget {
           ),
         MarketCard(
           children: [
-            Text(
-              'Service progress',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            for (final status in JobStatus.values)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  status.index < booking.status.index
-                      ? Icons.check_circle_outline
-                      : status == booking.status
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  color: status.index <= booking.status.index ? _green : null,
-                ),
-                title: Text(status.label),
-                selected: status == booking.status,
+            MarketHeading('Service progress'),
+            if (!contractor && booking.status == JobStatus.cancelled)
+              const StatusChip(label: 'Cancelled')
+            else if (!contractor)
+              StatusStepper(
+                labels: JobStatus.values.map((status) => status.label).toList(),
+                current: booking.status.index,
               ),
+            if (contractor)
+              for (final status in JobStatus.values)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    status.index < booking.status.index
+                        ? Icons.check_circle_outline
+                        : status == booking.status
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: status.index <= booking.status.index ? _green : null,
+                  ),
+                  title: Text(status.label),
+                  selected: status == booking.status,
+                ),
           ],
         ),
         if (booking.rating != null)
@@ -1354,7 +1471,7 @@ class _ReviewDialogState extends ConsumerState<_ReviewDialog> {
                 onPressed: () => setState(() => _rating = value),
                 icon: Icon(
                   value <= _rating ? Icons.star : Icons.star_border,
-                  color: _green,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ),
           ],
@@ -1413,8 +1530,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .where((item) => item.id == widget.id)
         .firstOrNull;
     if (booking == null) {
-      return const MarketPage(
+      return MarketPage(
         title: 'Messages',
+        dark: !widget.contractor,
         children: [Text('Booking unavailable.')],
       );
     }
@@ -1437,6 +1555,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     return MarketPage(
       title: 'Messages',
+      dark: !widget.contractor,
       children: [
         MarketBanner(
           booking.service.label,
@@ -1455,7 +1574,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   constraints: const BoxConstraints(maxWidth: 460),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: _mint,
+                    color: widget.contractor
+                        ? _mint
+                        : EdenDarkColors.strongGlass,
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Column(
@@ -1510,6 +1631,8 @@ class ProfileScreen extends ConsumerWidget {
     );
     return MarketPage(
       title: 'Profile & settings',
+      dark: !contractor,
+      darkNavigation: contractor ? null : const CustomerNavigation(index: 3),
       nav: contractor ? null : 2,
       children: [
         MarketBanner(
@@ -1543,12 +1666,19 @@ class ProfileScreen extends ConsumerWidget {
               Text(registration.area),
             if (contractor && registration.service.isNotEmpty)
               Text(registration.service),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.play_circle_outline),
-              title: const Text('Integration previews'),
-              onTap: () => context.push('/integration-demo'),
-            ),
+            if (!contractor) const Divider(),
+            if (!contractor)
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Orders & activity'),
+              ),
+            if (contractor)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.play_circle_outline),
+                title: const Text('Integration previews'),
+                onTap: () => context.push('/integration-demo'),
+              ),
             for (final section in [
               AccountSection.reviews,
               if (contractor) AccountSection.schedule,
@@ -1561,6 +1691,12 @@ class ProfileScreen extends ConsumerWidget {
                 title: Text(section.label),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => context.push('/account/${section.name}'),
+              ),
+            if (!contractor) const Divider(),
+            if (!contractor)
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Preferences & help'),
               ),
             for (final section in [
               SettingsSection.support,
@@ -1583,6 +1719,15 @@ class ProfileScreen extends ConsumerWidget {
                 title: const Text('Manage properties'),
                 onTap: () => context.push('/properties'),
               ),
+            if (!contractor)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.play_circle_outline),
+                title: const Text('Integration previews'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/integration-demo'),
+              ),
+            if (!contractor) const Divider(),
             ModeSwitchTile(contractor: contractor, area: registration.area),
             ListTile(
               contentPadding: EdgeInsets.zero,

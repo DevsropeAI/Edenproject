@@ -144,6 +144,8 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
     );
 
     return MarketPage(
+      customerTheme: true,
+      customerTab: section == SettingsSection.support ? 2 : null,
       title: section.label,
       children: [
         MarketBanner(section.label, switch (section) {
@@ -158,6 +160,7 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
             'Manage whether you are available for new jobs.',
         }, section.icon),
         MarketCard(
+          solid: section == SettingsSection.support,
           children: switch (section) {
             SettingsSection.preferences => [
               SwitchListTile(
@@ -218,10 +221,20 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
                 onPressed: _sending ? null : _sendTicket,
                 child: const Text('Send support request'),
               ),
+              const Divider(),
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.forum_outlined),
+                title: Text('Your requests'),
+              ),
               ...ref
                   .watch(supportRequestsProvider)
                   .when(
                     data: (tickets) => [
+                      if (tickets.isEmpty)
+                        const Text(
+                          'Support requests you send will appear here.',
+                        ),
                       for (final ticket in tickets)
                         ListTile(
                           contentPadding: EdgeInsets.zero,

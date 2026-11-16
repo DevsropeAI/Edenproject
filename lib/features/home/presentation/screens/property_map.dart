@@ -61,9 +61,9 @@ class _PropertyMapState extends State<PropertyMap> {
                   point: _pin,
                   width: 44,
                   height: 44,
-                  child: const Icon(
+                  child: Icon(
                     Icons.location_on,
-                    color: Color(0xFF164D36),
+                    color: Theme.of(context).colorScheme.primary,
                     size: 38,
                   ),
                 ),

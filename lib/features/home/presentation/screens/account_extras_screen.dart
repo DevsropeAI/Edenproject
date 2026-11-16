@@ -79,6 +79,7 @@ class AccountExtrasScreen extends ConsumerWidget {
       },
     );
     return MarketPage(
+      customerTheme: true,
       title: section.label,
       children: [
         MarketBanner(section.label, switch (section) {
@@ -136,10 +137,7 @@ class AccountExtrasScreen extends ConsumerWidget {
           for (final booking in matching)
             MarketCard(
               children: [
-                Text(
-                  booking.service.label,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
+                MarketHeading(booking.service.label),
                 Text('${booking.property.name} · Booking #${booking.id}'),
                 if (section == AccountSection.reviews) ...[
                   Text('${booking.rating}/5 stars'),

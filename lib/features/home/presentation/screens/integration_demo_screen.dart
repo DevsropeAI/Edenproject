@@ -59,6 +59,7 @@ class IntegrationDemoScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MarketPage(
+    customerTheme: true,
     title: 'Integration previews',
     children: [
       const MarketBanner(
@@ -76,7 +77,8 @@ class IntegrationDemoScreen extends StatelessWidget {
               subtitle: Text(description),
             ),
             OutlinedButton(
-              onPressed: () => showDialog<void>(
+              onPressed: () => showCustomerDialog<void>(
+                dark: null,
                 context: context,
                 builder: (_) => _FlowDialog(
                   title: title,

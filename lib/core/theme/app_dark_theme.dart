@@ -81,7 +81,22 @@ abstract final class EdenDarkTheme {
           borderRadius: BorderRadius.circular(EdenRadius.field),
         ),
       ),
-      bottomSheetTheme: const BottomSheetThemeData(showDragHandle: true),
+      dialogTheme: DialogThemeData(
+        backgroundColor: EdenDarkColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(EdenRadius.card),
+          side: const BorderSide(color: EdenDarkColors.strongGlass),
+        ),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        showDragHandle: true,
+        backgroundColor: EdenDarkColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(EdenRadius.card),
+          ),
+        ),
+      ),
     );
   }
 }

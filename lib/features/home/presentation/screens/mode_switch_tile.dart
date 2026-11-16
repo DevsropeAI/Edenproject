@@ -1,3 +1,5 @@
+import 'marketplace_screens.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -28,8 +30,9 @@ class _ModeSwitchTileState extends ConsumerState<ModeSwitchTile> {
     final role = widget.contractor ? 'customer' : 'contractor';
     try {
       final details = role == 'contractor' && widget.area.isEmpty
-          ? await showDialog<({String area, String service})>(
+          ? await showCustomerDialog<({String area, String service})>(
               context: context,
+              dark: null,
               builder: (_) => const _ContractorSetup(),
             )
           : (area: '', service: '');

@@ -29,32 +29,7 @@ class CustomerHomeScreen extends ConsumerWidget {
     return MarketPage(
       title: 'Eden',
       dark: true,
-      darkNavigation: GlassBottomNav(
-        selectedIndex: 0,
-        onSelected: (index) {
-          if (index == 0) return;
-          if (index == 2) {
-            context.push('/settings/support');
-          } else {
-            context.go(index == 1 ? '/bookings' : '/profile');
-          }
-        },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
-          NavigationDestination(
-            icon: Icon(Icons.receipt_long_outlined),
-            label: 'Orders',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.support_agent),
-            label: 'Support',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            label: 'Profile',
-          ),
-        ],
-      ),
+      darkNavigation: const CustomerNavigation(index: 0),
       children: [
         const MarketBanner(
           'What do you need done today?',

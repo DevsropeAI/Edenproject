@@ -107,6 +107,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         .maybeWhen(authenticated: (user) => user, orElse: () => null);
     if (user == null) {
       return const MarketPage(
+        customerTheme: true,
         title: 'Edit profile',
         children: [Text('Sign in to edit your profile.')],
       );
@@ -115,6 +116,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         ? _photo
         : ref.watch(accountImageProvider('profile')).value;
     return MarketPage(
+      customerTheme: true,
       title: 'Edit profile',
       children: [
         MarketBanner('Personal details', user.email, Icons.badge_outlined),
@@ -201,7 +203,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               onPressed: _deleting || _saving
                   ? null
                   : () async {
-                      final confirm = await showDialog<bool>(
+                      final confirm = await showCustomerDialog<bool>(
+                        dark: null,
                         context: context,
                         builder: (dialog) => AlertDialog(
                           title: const Text('Delete account?'),

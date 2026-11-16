@@ -58,8 +58,14 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         .watch(bookingsProvider)
         .where((booking) => booking.status == JobStatus.completed);
     return MarketPage(
+      customerTheme: true,
       title: 'Payments & refunds',
       children: [
+        const MarketBanner(
+          'Payment activity',
+          'Review payments, tips, and refund requests for completed orders.',
+          Icons.receipt_long_outlined,
+        ),
         OutlinedButton(
           onPressed: _busy ? null : () => ref.invalidate(_paymentsProvider),
           child: const Text('Refresh payment status'),
@@ -76,6 +82,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               if (bookings.isEmpty) const Text('No completed bookings yet.'),
               for (final booking in bookings)
                 MarketCard(
+                  solid: true,
                   children: [
                     Text('Booking #${booking.id} · ${booking.service.label}'),
                     Text('CAD ${booking.total.toStringAsFixed(2)}'),
