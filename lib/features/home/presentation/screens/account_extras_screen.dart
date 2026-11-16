@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../preferences.dart';
 import '../../marketplace.dart';
 import 'marketplace_screens.dart';
+import 'payments_screen.dart';
 
 enum AccountSection {
   reviews('Reviews', Icons.star_outline),
@@ -16,14 +18,7 @@ enum AccountSection {
   final IconData icon;
 }
 
-typedef LocalAccount = ({
-  Map<int, int> tips,
-  Set<int> refunds,
-  Set<int> paused,
-  TimeOfDay opens,
-  TimeOfDay closes,
-  int radius,
-});
+typedef LocalAccount = ({TimeOfDay opens, TimeOfDay closes, int radius});
 
 final localAccountProvider =
     NotifierProvider<LocalAccountNotifier, LocalAccount>(
@@ -32,27 +27,32 @@ final localAccountProvider =
 
 class LocalAccountNotifier extends Notifier<LocalAccount> {
   @override
-  LocalAccount build() => (
-    tips: const {},
-    refunds: const {},
-    paused: const {},
-    opens: const TimeOfDay(hour: 9, minute: 0),
-    closes: const TimeOfDay(hour: 17, minute: 0),
-    radius: 15,
-  );
+  LocalAccount build() {
+    final saved = ref.watch(preferencesProvider).value ?? const {};
+    TimeOfDay time(String key, int fallback) {
+      final minutes = saved[key] as int? ?? fallback;
+      return TimeOfDay(hour: minutes ~/ 60, minute: minutes % 60);
+    }
 
-  void update({
-    Map<int, int>? tips,
-    Set<int>? refunds,
-    Set<int>? paused,
-    TimeOfDay? opens,
-    TimeOfDay? closes,
-    int? radius,
-  }) {
+    return (
+      opens: time('opens', 540),
+      closes: time('closes', 1020),
+      radius: saved['radius'] as int? ?? 15,
+    );
+  }
+
+  void previewRadius(int radius) =>
+      state = (opens: state.opens, closes: state.closes, radius: radius);
+
+  void update({TimeOfDay? opens, TimeOfDay? closes, int? radius}) {
+    if (opens != null || closes != null || radius != null) {
+      savePreferences(ref, {
+        if (opens != null) 'opens': opens.hour * 60 + opens.minute,
+        if (closes != null) 'closes': closes.hour * 60 + closes.minute,
+        if (radius != null) 'radius': radius,
+      });
+    }
     state = (
-      tips: tips ?? state.tips,
-      refunds: refunds ?? state.refunds,
-      paused: paused ?? state.paused,
       opens: opens ?? state.opens,
       closes: closes ?? state.closes,
       radius: radius ?? state.radius,
@@ -66,13 +66,14 @@ class AccountExtrasScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (section == AccountSection.payments) return const PaymentsScreen();
     final bookings = ref.watch(bookingsProvider);
     final settings = ref.watch(localAccountProvider);
     final notifier = ref.read(localAccountProvider.notifier);
     final matching = bookings.where(
       (booking) => switch (section) {
         AccountSection.reviews => booking.rating != null,
-        AccountSection.payments => booking.demoPaid,
+        AccountSection.payments => false,
         AccountSection.recurring => booking.recurring,
         AccountSection.schedule => false,
       },
@@ -84,7 +85,7 @@ class AccountExtrasScreen extends ConsumerWidget {
           AccountSection.reviews =>
             'Ratings and written feedback from completed jobs.',
           AccountSection.payments =>
-            'Demo card activity and refund requests for this session.',
+            'Review booking payments and refund requests.',
           AccountSection.recurring =>
             'Manage your saved weekly service preferences.',
           AccountSection.schedule =>
@@ -126,101 +127,38 @@ class AccountExtrasScreen extends ConsumerWidget {
                 max: 50,
                 divisions: 9,
                 label: '${settings.radius} km',
-                onChanged: (value) => notifier.update(radius: value.round()),
+                onChanged: (value) => notifier.previewRadius(value.round()),
+                onChangeEnd: (value) => notifier.update(radius: value.round()),
               ),
             ],
           )
         else ...[
-          for (final booking in matching.isEmpty ? [_sampleBooking] : matching)
+          for (final booking in matching)
             MarketCard(
               children: [
-                if (booking.id == _sampleBooking.id)
-                  const Chip(label: Text('Sample activity')),
                 Text(
                   booking.service.label,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
-                Text(
-                  booking.id == _sampleBooking.id
-                      ? booking.property.name
-                      : '${booking.property.name} · Booking #${booking.id}',
-                ),
+                Text('${booking.property.name} · Booking #${booking.id}'),
                 if (section == AccountSection.reviews) ...[
                   Text('${booking.rating}/5 stars'),
                   if (booking.review.isNotEmpty) Text(booking.review),
-                ],
-                if (section == AccountSection.payments) ...[
-                  Text(
-                    'Demo card approved · CAD ${booking.total.toStringAsFixed(2)}',
-                  ),
-                  if (settings.tips[booking.id] case final tip?)
-                    Text('Demo tip · CAD $tip'),
-                  if (settings.refunds.contains(booking.id))
-                    const Text('Refund requested · Pending demo review'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      if (booking.status == JobStatus.completed &&
-                          !settings.tips.containsKey(booking.id) &&
-                          !settings.refunds.contains(booking.id))
-                        OutlinedButton(
-                          onPressed: () async {
-                            final tip = await showDialog<int>(
-                              context: context,
-                              builder: (dialog) => SimpleDialog(
-                                title: const Text('Add a demo tip'),
-                                children: [
-                                  for (final amount in [5, 10, 15])
-                                    SimpleDialogOption(
-                                      onPressed: () =>
-                                          Navigator.pop(dialog, amount),
-                                      child: Text('CAD $amount'),
-                                    ),
-                                ],
-                              ),
-                            );
-                            if (tip == null || !context.mounted) return;
-                            notifier.update(
-                              tips: {
-                                ...ref.read(localAccountProvider).tips,
-                                booking.id: tip,
-                              },
-                            );
-                          },
-                          child: const Text('Add demo tip'),
-                        ),
-                      if (!settings.refunds.contains(booking.id))
-                        OutlinedButton(
-                          onPressed: () => notifier.update(
-                            refunds: {...settings.refunds, booking.id},
-                          ),
-                          child: const Text('Request demo refund'),
-                        ),
-                    ],
-                  ),
                 ],
                 if (section == AccountSection.recurring)
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Weekly preference active'),
-                    subtitle: const Text('Saved locally for this session'),
-                    value: !settings.paused.contains(booking.id),
-                    onChanged: (enabled) {
-                      final paused = {...settings.paused};
-                      if (enabled) {
-                        paused.remove(booking.id);
-                      } else {
-                        paused.add(booking.id);
-                      }
-                      notifier.update(paused: paused);
-                    },
+                    subtitle: const Text('Saved to your account'),
+                    value: !booking.paused,
+                    onChanged: (active) => ref
+                        .read(bookingsProvider.notifier)
+                        .setWeeklyPaused(booking.id, !active),
                   ),
-                if (booking.id != _sampleBooking.id)
-                  TextButton(
-                    onPressed: () => context.push('/bookings/${booking.id}'),
-                    child: const Text('View booking'),
-                  ),
+                TextButton(
+                  onPressed: () => context.push('/bookings/${booking.id}'),
+                  child: const Text('View booking'),
+                ),
               ],
             ),
         ],
@@ -228,17 +166,3 @@ class AccountExtrasScreen extends ConsumerWidget {
     );
   }
 }
-
-final _sampleBooking = Booking(
-  id: -1,
-  property: const Property(-1, 'Maple House', 'Toronto', 'Standard', ''),
-  service: Service.snow,
-  date: DateTime(2026, 1, 10, 9),
-  total: 50.85,
-  notes: '',
-  recurring: true,
-  demoPaid: true,
-  status: JobStatus.completed,
-  rating: 5,
-  review: 'The driveway and front walkway were cleared before I left for work.',
-);

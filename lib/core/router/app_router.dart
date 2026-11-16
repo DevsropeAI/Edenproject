@@ -1,4 +1,9 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../features/auth/providers/auth_provider.dart';
+import '../../features/auth/domain/auth_state.dart';
 
 import '../../features/home/presentation/screens/account_extras_screen.dart';
 
@@ -20,8 +25,46 @@ import '../../features/home/presentation/screens/contractor_home_screen.dart';
 import '../../features/home/marketplace.dart';
 import '../../features/home/presentation/screens/marketplace_screens.dart';
 
-class AppRouter {
-  static final router = GoRouter(
+final appRouterProvider = Provider<GoRouter>((ref) {
+  final refresh = ValueNotifier(0);
+  ref.listen(authProvider, (_, _) => refresh.value++);
+  final router = GoRouter(
+    refreshListenable: refresh,
+    redirect: (context, state) {
+      final path = state.uri.path;
+      final isPublic =
+          path == '/login' ||
+          path == '/onboarding' ||
+          path == '/reset-password' ||
+          path.startsWith('/register/');
+      final role = ref
+          .read(authProvider)
+          .maybeWhen(authenticated: (user) => user.role, orElse: () => null);
+      if (role == null) return isPublic ? null : '/login';
+      final home = '/$role-home';
+      if (isPublic) return home;
+      final customerOnly =
+          path == '/customer-home' ||
+          path == '/bookings' ||
+          path.startsWith('/bookings/') ||
+          path == '/properties' ||
+          path.startsWith('/booking/') ||
+          path == '/settings/automatic' ||
+          path == '/account/payments' ||
+          path == '/account/recurring';
+      final contractorOnly =
+          path == '/contractor-home' ||
+          path.startsWith('/job-details/') ||
+          path == '/verification' ||
+          path == '/settings/wallet' ||
+          path == '/settings/verification' ||
+          path == '/account/schedule';
+      if ((role == 'customer' && contractorOnly) ||
+          (role == 'contractor' && customerOnly)) {
+        return home;
+      }
+      return null;
+    },
     initialLocation: '/login',
     routes: [
       GoRoute(
@@ -97,7 +140,12 @@ class AppRouter {
         path: '/chat/:id',
         builder: (context, state) => ChatScreen(
           id: int.tryParse(state.pathParameters['id']!),
-          contractor: state.extra == true,
+          contractor: ref
+              .read(authProvider)
+              .maybeWhen(
+                authenticated: (user) => user.role == 'contractor',
+                orElse: () => false,
+              ),
         ),
       ),
       GoRoute(
@@ -123,9 +171,20 @@ class AppRouter {
       ),
       GoRoute(
         path: '/profile',
-        builder: (context, state) =>
-            ProfileScreen(contractor: state.extra == true),
+        builder: (context, state) => ProfileScreen(
+          contractor: ref
+              .read(authProvider)
+              .maybeWhen(
+                authenticated: (user) => user.role == 'contractor',
+                orElse: () => false,
+              ),
+        ),
       ),
     ],
   );
-}
+  ref.onDispose(() {
+    router.dispose();
+    refresh.dispose();
+  });
+  return router;
+});

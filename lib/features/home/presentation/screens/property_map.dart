@@ -13,6 +13,25 @@ class PropertyMap extends StatefulWidget {
 
 class _PropertyMapState extends State<PropertyMap> {
   late LatLng _pin = widget.initial;
+  final _controller = MapController();
+  bool _ready = false;
+
+  @override
+  void didUpdateWidget(covariant PropertyMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.editable && oldWidget.initial != widget.initial) {
+      _pin = widget.initial;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _ready) _controller.move(_pin, _controller.camera.zoom);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Column(
@@ -21,7 +40,9 @@ class _PropertyMapState extends State<PropertyMap> {
       SizedBox(
         height: 280,
         child: FlutterMap(
+          mapController: _controller,
           options: MapOptions(
+            onMapReady: () => _ready = true,
             initialCenter: _pin,
             initialZoom: 14,
             maxZoom: 19,

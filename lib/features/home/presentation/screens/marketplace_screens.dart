@@ -1,33 +1,28 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../../auth/providers/auth_provider.dart';
+import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../auth/domain/auth_state.dart';
 import '../../marketplace.dart';
 import 'demo_settings_screen.dart';
+import 'mode_switch_tile.dart';
 import 'profile_tools.dart';
 import 'account_extras_screen.dart';
 import 'property_map.dart';
+import 'booking_location.dart';
 
 import 'package:latlong2/latlong.dart';
 
 Future<void> signOut(BuildContext context, WidgetRef ref) async {
   try {
     await ref.read(authProvider.notifier).logout();
-    if (!context.mounted) return;
-    ref.invalidate(bookingsProvider);
-    ref.invalidate(demoSettingsProvider);
-    ref.invalidate(payoutRequestedProvider);
-    ref.invalidate(localAccountProvider);
-    ref.invalidate(profilePhotoProvider);
-    ref.invalidate(verificationProvider);
-    ref.invalidate(propertiesProvider);
-    context.go('/login');
   } catch (_) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -84,7 +79,9 @@ class MarketPage extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 820),
         child: ListView(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(
+            MediaQuery.sizeOf(context).width < 420 ? 16 : 24,
+          ),
           children: [
             for (final child in children)
               Padding(padding: const EdgeInsets.only(bottom: 16), child: child),
@@ -103,7 +100,7 @@ class MarketBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(26),
+    padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 420 ? 18 : 26),
     decoration: BoxDecoration(
       gradient: const LinearGradient(colors: [_green, Color(0xFF317754)]),
       borderRadius: BorderRadius.circular(24),
@@ -415,9 +412,9 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
         child: const Text('Cancel'),
       ),
       FilledButton(
-        onPressed: () {
+        onPressed: () async {
           if (!_form.currentState!.validate()) return;
-          ref
+          final saved = await ref
               .read(propertiesProvider.notifier)
               .save(
                 widget.property?.id,
@@ -434,7 +431,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                         longitude: double.parse(_longitude.text.trim()),
                       ),
               );
-          Navigator.pop(context);
+          if (saved && context.mounted) Navigator.pop(context);
         },
         child: const Text('Save property'),
       ),
@@ -526,9 +523,28 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         children: [Text('Property unavailable.')],
       );
     }
-    final base = _service.price + (property.size == 'Large' ? 15 : 0);
+    final catalog = ref.watch(serviceCatalogProvider);
+    final options = catalog.value ?? const <Service, int>{};
+    if (options.isEmpty) {
+      return MarketPage(
+        title: 'Book a service',
+        children: [
+          if (catalog.isLoading)
+            const LinearProgressIndicator()
+          else
+            TextButton(
+              onPressed: () => ref.invalidate(serviceCatalogProvider),
+              child: const Text('Reload available services'),
+            ),
+        ],
+      );
+    }
+    final service = options.containsKey(_service)
+        ? _service
+        : options.keys.first;
+    final base = options[service]! / 100 + (property.size == 'Large' ? 15 : 0);
     final rushFee = _urgent ? 20 : 0;
-    final walkwayFee = _service == Service.snow && _walkway ? 12 : 0;
+    final walkwayFee = service == Service.snow && _walkway ? 12 : 0;
     final subtotal = base + rushFee + walkwayFee;
     final discount = _coupon.text.trim().toUpperCase() == 'EDEN10'
         ? (subtotal * 10).round() / 100
@@ -546,10 +562,10 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         MarketCard(
           children: [
             DropdownButtonFormField<Service>(
-              initialValue: _service,
+              initialValue: service,
               decoration: const InputDecoration(labelText: 'Service'),
               items: [
-                for (final service in Service.values)
+                for (final service in options.keys)
                   DropdownMenuItem(value: service, child: Text(service.label)),
               ],
               onChanged: (service) => setState(() => _service = service!),
@@ -575,7 +591,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               value: _recurring,
               onChanged: (value) => setState(() => _recurring = value),
             ),
-            if (_service == Service.snow)
+            if (service == Service.snow)
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Add walkway clearing · CAD 12'),
@@ -625,7 +641,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               'Total  ${_money.format(total)} CAD',
               style: Theme.of(context).textTheme.titleLarge,
             ),
-            const Text('Demo booking. No payment is collected.'),
+            const Text('Payment is available after the booking is completed.'),
             FilledButton(
               onPressed: _scheduled == null
                   ? null
@@ -642,12 +658,11 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(_service.label),
+                              Text(service.label),
                               Text(property.address),
                               Text(_date.format(_scheduled!)),
                               const Divider(),
                               Text('Total: ${_money.format(total)} CAD'),
-                              const Text('Payment method: Demo card'),
                               const Text('No charge will be made.'),
                             ],
                           ),
@@ -658,7 +673,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             ),
                             FilledButton(
                               onPressed: () => Navigator.pop(dialog, true),
-                              child: const Text('Place demo order'),
+                              child: const Text('Place booking'),
                             ),
                           ],
                         ),
@@ -668,13 +683,12 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                         setState(() => _scheduled = null);
                         return;
                       }
-                      ref
+                      final placed = await ref
                           .read(bookingsProvider.notifier)
                           .place(
                             property,
-                            _service,
+                            service,
                             _scheduled!,
-                            total,
                             [
                               if (walkwayFee > 0) 'Includes walkway clearing.',
                               if (_notes.text.trim().isNotEmpty)
@@ -682,9 +696,11 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             ].join(' '),
                             _recurring,
                             referencePhoto: _referencePhoto,
-                            demoPaid: true,
+                            urgent: _urgent,
+                            walkway: _walkway,
+                            discount: discount > 0,
                           );
-                      context.go('/bookings');
+                      if (placed && context.mounted) context.go('/bookings');
                     },
               child: const Text('Continue to checkout'),
             ),
@@ -789,10 +805,15 @@ class BookingListScreen extends ConsumerWidget {
                     (
                       'Active',
                       JobStatus.values.where(
-                        (status) => status != JobStatus.completed,
+                        (status) =>
+                            status != JobStatus.completed &&
+                            status != JobStatus.cancelled,
                       ),
                     ),
-                    ('Past bookings', [JobStatus.completed]),
+                    (
+                      'Past bookings',
+                      [JobStatus.completed, JobStatus.cancelled],
+                    ),
                   ]))
           if (visible.any((booking) => statuses.contains(booking.status))) ...[
             Text(title, style: Theme.of(context).textTheme.titleLarge),
@@ -857,8 +878,8 @@ class BookingDetailsScreen extends ConsumerWidget {
       if (file == null) return;
       final bytes = await file.readAsBytes();
       if (!context.mounted) return;
-      if (bytes.length > 10 * 1024 * 1024) {
-        throw StateError('Photo exceeds 10 MB');
+      if (bytes.length > 2 * 1024 * 1024) {
+        throw StateError('Photo exceeds 2 MB');
       }
       ref.read(bookingsProvider.notifier).change(booking.id, (current) {
         if (current.status != booking.status) return current;
@@ -870,7 +891,7 @@ class BookingDetailsScreen extends ConsumerWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Could not open photo. Try an image under 10 MB.'),
+            content: Text('Could not open photo. Try an image under 2 MB.'),
           ),
         );
       }
@@ -936,52 +957,40 @@ class BookingDetailsScreen extends ConsumerWidget {
               ),
             if (booking.property.notes.isNotEmpty) Text(booking.property.notes),
             if (booking.notes.isNotEmpty) Text(booking.notes),
-            OutlinedButton.icon(
-              onPressed: () =>
-                  context.push('/chat/${booking.id}', extra: contractor),
-              icon: const Icon(Icons.chat_bubble_outline),
-              label: const Text('Messages'),
-            ),
+            if (booking.status != JobStatus.searching &&
+                booking.status != JobStatus.cancelled)
+              OutlinedButton.icon(
+                onPressed: () =>
+                    context.push('/chat/${booking.id}', extra: contractor),
+                icon: const Icon(Icons.chat_bubble_outline),
+                label: const Text('Messages'),
+              ),
           ],
         ),
         if (!contractor && booking.status == JobStatus.enRoute)
           MarketCard(
             children: [
-              const Text('Booking update · Your contractor is on the way'),
-              const Text('Simulated location · 1.2 km away · ETA 4 min'),
-              if (booking.property.pin case final pin?)
-                PropertyMap(
-                  initial: LatLng(pin.latitude + .006, pin.longitude),
-                ),
+              const Text('Your contractor is on the way'),
+              CustomerTrackingMap(
+                key: ValueKey(booking.id),
+                bookingId: booking.id,
+              ),
             ],
           ),
         if (!contractor && booking.status == JobStatus.completed)
           MarketCard(
             children: [
               Text(
-                'Demo receipt',
+                'Booking summary',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               Text('Booking #${booking.id} · ${booking.service.label}'),
               Text('Quoted total: ${_money.format(booking.total)} CAD'),
-              Text(
-                booking.demoPaid
-                    ? 'Demo card approved. No money moved.'
-                    : 'No payment collected for this demo order.',
+              TextButton(
+                onPressed: () => context.push('/account/payments'),
+                child: const Text('Payments & refunds'),
               ),
             ],
-          ),
-        if (!booking.declined || contractor)
-          TextButton.icon(
-            onPressed: () => context.go(
-              '/${contractor ? 'bookings' : 'job-details'}/${booking.id}',
-            ),
-            icon: const Icon(Icons.swap_horiz),
-            label: Text(
-              contractor
-                  ? 'Demo: open customer view'
-                  : 'Demo: open contractor view',
-            ),
           ),
         if (booking.referencePhoto case final photo?)
           MarketCard(
@@ -1046,11 +1055,24 @@ class BookingDetailsScreen extends ConsumerWidget {
           if (booking.status == JobStatus.searching)
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
-                FilledButton(
-                  onPressed: () => advance(JobStatus.accepted),
-                  child: const Text('Accept job'),
-                ),
+                if (ref.watch(contractorVerificationProvider).value ==
+                    'Approved')
+                  FilledButton(
+                    onPressed: () => advance(JobStatus.accepted),
+                    child: const Text('Accept job'),
+                  )
+                else
+                  FilledButton(
+                    onPressed: () async {
+                      ref.invalidate(contractorVerificationProvider);
+                      await context.push('/verification');
+                      if (context.mounted)
+                        ref.invalidate(contractorVerificationProvider);
+                    },
+                    child: const Text('Open verification'),
+                  ),
                 OutlinedButton(
                   onPressed: () {
                     notifier.change(
@@ -1067,6 +1089,11 @@ class BookingDetailsScreen extends ConsumerWidget {
             FilledButton(
               onPressed: () => advance(JobStatus.enRoute),
               child: const Text('Mark on the way'),
+            ),
+          if (booking.status == JobStatus.enRoute)
+            ContractorLocationSharing(
+              key: ValueKey(booking.id),
+              bookingId: booking.id,
             ),
           if (booking.status == JobStatus.enRoute)
             FilledButton(
@@ -1259,10 +1286,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         children: [Text('Booking unavailable.')],
       );
     }
-    void send([Uint8List? image]) {
+    Future<void> send([Uint8List? image]) async {
       final message = _message.text.trim();
       if (message.isEmpty && image == null) return;
-      ref
+      final sent = await ref
           .read(bookingsProvider.notifier)
           .change(
             booking.id,
@@ -1273,7 +1300,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ],
             ),
           );
-      _message.clear();
+      if (sent && mounted && _message.text.trim() == message) _message.clear();
     }
 
     return MarketPage(
@@ -1361,7 +1388,8 @@ class ProfileScreen extends ConsumerWidget {
         MarketCard(
           children: [
             if (user != null) ...[
-              if (ref.watch(profilePhotoProvider) case final photo?)
+              if (ref.watch(accountImageProvider('profile')).value
+                  case final photo?)
                 CircleAvatar(radius: 28, backgroundImage: MemoryImage(photo)),
               Text(user.email),
               ListTile(
@@ -1423,16 +1451,7 @@ class ProfileScreen extends ConsumerWidget {
                 title: const Text('Manage properties'),
                 onTap: () => context.push('/properties'),
               ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.swap_horiz),
-              title: Text(
-                contractor ? 'Switch to customer' : 'Switch to contractor',
-              ),
-              onTap: () => context.go(
-                contractor ? '/customer-home' : '/contractor-home',
-              ),
-            ),
+            ModeSwitchTile(contractor: contractor, area: registration.area),
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.logout),

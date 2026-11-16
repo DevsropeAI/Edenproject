@@ -1,77 +1,104 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart'
-    show Notifier, NotifierProvider;
+import 'dart:async';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../domain/auth_state.dart';
 import '../data/models/user.dart';
 import '../data/repositories/auth_repository.dart';
 
-import '../../../core/storage/secure_storage.dart';
-
 part 'auth_provider.g.dart';
 
 @riverpod
 class AuthNotifier extends _$AuthNotifier {
+  AuthRepository get _repo => ref.read(authRepositoryProvider);
+
   @override
   AuthState build() {
-    // Keep the provider alive during async operations (like the 2-second login)
     ref.keepAlive();
+    unawaited(Future<void>.microtask(_restore));
     return const AuthState.initial();
   }
 
+  Future<void> _restore() async {
+    try {
+      final account = await _repo.restore();
+      if (!ref.mounted) return;
+      if (account == null) {
+        state = const AuthState.unauthenticated();
+      } else {
+        _apply(account);
+      }
+    } catch (error) {
+      if (ref.mounted) state = AuthState.error(apiError(error));
+    }
+  }
+
+  void _apply(Map<String, dynamic> account) {
+    ref.read(registrationDetailsProvider.notifier).save(account);
+    state = AuthState.authenticated(User.fromJson(account));
+  }
+
   Future<void> logout() async {
-    await SecureStorage().deleteToken();
-    if (ref.mounted) state = const AuthState.unauthenticated();
+    await _repo.logout();
+    if (!ref.mounted) return;
+    ref.invalidate(registrationDetailsProvider);
+    state = const AuthState.unauthenticated();
   }
 
   Future<void> login(String email, String password) async {
     state = const AuthState.loading();
     try {
-      final user = await ref
-          .read(authRepositoryProvider)
-          .login(email, password);
-      // Check if the provider is still alive before updating state
-      if (ref.mounted) {
-        state = AuthState.authenticated(user);
-      }
-    } catch (e) {
-      if (ref.mounted) {
-        state = AuthState.error(e.toString());
-      }
+      final account = await _repo.login(email, password);
+      if (ref.mounted) _apply(account);
+    } catch (error) {
+      if (ref.mounted) state = AuthState.error(apiError(error));
     }
   }
 
-  Future<void> register(
-    String name,
-    String email,
-    String password,
-    String role,
-  ) async {
+  Future<void> register(Map<String, dynamic> details) async {
     state = const AuthState.loading();
     try {
-      await ref
-          .read(authRepositoryProvider)
-          .register(name, email, password, role);
-      if (ref.mounted) {
-        state = const AuthState.unauthenticated();
-      }
-    } catch (e) {
-      if (ref.mounted) {
-        state = AuthState.error(e.toString());
-      }
+      await _repo.register(details);
+      if (ref.mounted) state = const AuthState.unauthenticated();
+    } catch (error) {
+      if (ref.mounted) state = AuthState.error(apiError(error));
     }
   }
 
-  void updateProfile(User user) {
-    ref.read(authRepositoryProvider).updateProfile(user);
-    state = AuthState.authenticated(user);
+  Future<void> switchMode(String role, {String? area, String? service}) async {
+    final account = await _repo.update('mode', {
+      'role': role,
+      'area': area,
+      'service': service,
+    });
+    if (ref.mounted) _apply(account);
   }
 
-  Future<void> deleteAccount(String email) async {
-    await ref.read(authRepositoryProvider).deleteAccount(email);
-    if (ref.mounted) state = const AuthState.unauthenticated();
+  Future<void> updateProfile(User user, String phone) async {
+    final account = await _repo.update('profile', {
+      'name': user.name,
+      'phone': phone,
+    });
+    if (ref.mounted) _apply(account);
+  }
+
+  Future<void> deleteAccount() async {
+    await _repo.deleteAccount();
+    if (!ref.mounted) return;
+    ref.invalidate(registrationDetailsProvider);
+    state = const AuthState.unauthenticated();
   }
 }
+
+final activeAccountIdProvider = Provider<String?>(
+  (ref) => ref.watch(
+    authProvider.select(
+      (auth) =>
+          auth.maybeWhen(authenticated: (user) => user.id, orElse: () => null),
+    ),
+  ),
+);
 
 typedef RegistrationDetails = ({String phone, String area, String service});
 
@@ -84,11 +111,11 @@ class RegistrationDetailsNotifier extends Notifier<RegistrationDetails> {
   @override
   RegistrationDetails build() => (phone: '', area: '', service: '');
 
-  void save({
-    required String phone,
-    required String area,
-    required String service,
-  }) {
-    state = (phone: phone, area: area, service: service);
+  void save(Map<String, dynamic> account) {
+    state = (
+      phone: account['phone'] as String,
+      area: account['area'] as String,
+      service: account['service'] as String,
+    );
   }
 }

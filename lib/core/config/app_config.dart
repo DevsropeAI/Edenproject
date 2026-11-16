@@ -1,5 +1,12 @@
+import 'package:flutter/foundation.dart';
+
 class AppConfig {
   static const String appName = 'Eden';
-  // Use 10.0.2.2 for Android Emulator, localhost for iOS/Web
-  static const String apiBaseUrl = 'http://10.0.2.2:3000/api'; 
+  static const _configuredUrl = String.fromEnvironment('EDEN_API_URL');
+
+  static String get apiBaseUrl => _configuredUrl.isNotEmpty
+      ? _configuredUrl
+      : !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+      ? 'http://10.0.2.2:3001/api'
+      : 'http://localhost:3001/api';
 }

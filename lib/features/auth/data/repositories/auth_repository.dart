@@ -1,86 +1,73 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/network/api_client.dart';
 import '../../../../core/storage/secure_storage.dart';
-import '../models/user.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(ref.read(apiClientProvider), SecureStorage());
 });
 
+String apiError(Object error) {
+  if (error is DioException) {
+    final data = error.response?.data;
+    if (data is Map && data['message'] is String)
+      return data['message'] as String;
+    return 'Could not reach Eden. Check your connection and try again.';
+  }
+  return 'Something went wrong. Please try again.';
+}
+
 class AuthRepository {
   final ApiClient apiClient;
   final SecureStorage _storage;
-  final _demoAccounts = <String, ({User user, String password})>{};
-  final _deletedEmails = <String>{};
 
   AuthRepository(this.apiClient, this._storage);
 
-  Future<User> login(String email, String password) async {
-    // Simulating API call for now since backend is not ready
-    await Future.delayed(const Duration(seconds: 2));
-    if (email.isEmpty || password.isEmpty) {
-      throw Exception('Invalid credentials');
-    }
-
-    // Mock User
-    final key = email.toLowerCase();
-    if (_deletedEmails.contains(key)) {
-      throw Exception('Account deleted. Create a new account to continue.');
-    }
-    final account = _demoAccounts[key];
-    if (account != null && account.password != password) {
-      throw Exception('Incorrect password');
-    }
-    final user =
-        account?.user ??
-        User(id: '1', email: email, name: 'Test User', role: 'customer');
-    await _storage.saveToken('mock_jwt_token_123');
-    return user;
-  }
-
-  Future<void> register(
-    String name,
-    String email,
-    String password,
-    String role,
-  ) async {
-    await Future.delayed(const Duration(seconds: 2));
-    final key = email.toLowerCase();
-    if (_demoAccounts.containsKey(key)) {
-      throw Exception('An account already uses this email');
-    }
-    await _storage.deleteToken();
-    if (_demoAccounts.containsKey(key)) {
-      throw Exception('An account already uses this email');
-    }
-    _demoAccounts[key] = (
-      user: User(id: key, email: email, name: name, role: role),
-      password: password,
+  Future<Map<String, dynamic>> login(String email, String password) async {
+    final response = await apiClient.post(
+      '/auth/login',
+      data: {'email': email, 'password': password},
     );
-    _deletedEmails.remove(key);
+    await _storage.saveToken(response.data['token'] as String);
+    return Map<String, dynamic>.from(response.data['user'] as Map);
   }
 
-  void updateProfile(User user) {
-    final key = user.email.toLowerCase();
-    final account = _demoAccounts[key];
-    if (account != null) {
-      _demoAccounts[key] = (user: user, password: account.password);
+  Future<Map<String, dynamic>?> restore() async {
+    if (await _storage.getToken() == null) return null;
+    try {
+      final response = await apiClient.get('/auth/me');
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (error) {
+      if (error.response?.statusCode != 401) rethrow;
+      await _storage.deleteToken();
+      return null;
     }
   }
 
-  bool resetDemoPassword(String email, String password) {
-    final key = email.toLowerCase();
-    final account = _demoAccounts[key];
-    if (account == null) return false;
-    _demoAccounts[key] = (user: account.user, password: password);
-    return true;
+  Future<void> register(Map<String, dynamic> details) async {
+    await apiClient.post('/auth/register', data: details);
   }
 
-  Future<void> deleteAccount(String email) async {
+  Future<Map<String, dynamic>> update(
+    String path,
+    Map<String, dynamic> data,
+  ) async {
+    final response = await apiClient.post('/auth/$path', data: data);
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<void> logout() async {
+    try {
+      await apiClient.post('/auth/logout');
+    } on DioException catch (error) {
+      if (error.response?.statusCode != 401) rethrow;
+    }
     await _storage.deleteToken();
-    final key = email.toLowerCase();
-    _demoAccounts.remove(key);
-    _deletedEmails.add(key);
+  }
+
+  Future<void> deleteAccount() async {
+    await apiClient.delete('/auth/me');
+    await _storage.deleteToken();
   }
 }

@@ -2,10 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/network/api_client.dart';
+import '../../data/repositories/auth_repository.dart';
 import '../../../home/presentation/screens/marketplace_screens.dart';
 import '../../domain/auth_state.dart';
-import '../../data/repositories/auth_repository.dart';
 import '../../providers/auth_provider.dart';
+
+final _phoneVerificationProvider = FutureProvider.autoDispose<bool>((
+  ref,
+) async {
+  final response = await ref.watch(apiClientProvider).get('/auth/options');
+  return response.data['phoneVerification'] == true;
+});
 
 enum AuthMode { login, customer, contractor, reset }
 
@@ -24,11 +32,12 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _phone = TextEditingController();
-  final _verificationCode = TextEditingController();
   final _area = TextEditingController();
+  final _resetCode = TextEditingController();
+  bool _codeRequested = false;
+  final _phoneCode = TextEditingController();
   bool _obscure = true;
   bool _busy = false;
-  bool _resetRequested = false;
   String? _feedback;
   String _service = 'Snow removal';
 
@@ -44,7 +53,8 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
       _password,
       _phone,
       _area,
-      _verificationCode,
+      _resetCode,
+      _phoneCode,
     ]) {
       controller.dispose();
     }
@@ -52,55 +62,39 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
   }
 
   Future<void> _submit() async {
-    if (_busy || !_form.currentState!.validate()) return;
-    if (_reset) {
-      if (_resetRequested) {
-        final changed = ref
-            .read(authRepositoryProvider)
-            .resetDemoPassword(_email.text.trim(), _password.text);
-        if (changed) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Demo password updated.')),
-          );
-          context.go('/login');
-        } else {
-          setState(
-            () => _feedback = 'Register a demo account in this session first.',
-          );
-        }
-        return;
-      }
-      setState(
-        () => _feedback = 'Use the sample reset link below. No email was sent.',
-      );
+    if (_busy ||
+        ref
+            .read(authProvider)
+            .maybeWhen(initial: () => true, orElse: () => false) ||
+        !_form.currentState!.validate())
       return;
-    }
     setState(() {
       _busy = true;
       _feedback = null;
     });
+    if (_reset) {
+      await _resetPassword();
+      return;
+    }
     final notifier = ref.read(authProvider.notifier);
     if (_login) {
       await notifier.login(_email.text.trim(), _password.text);
     } else {
-      await notifier.register(
-        _name.text.trim(),
-        _email.text.trim(),
-        _password.text,
-        _contractor ? 'contractor' : 'customer',
-      );
+      await notifier.register({
+        'name': _name.text.trim(),
+        'email': _email.text.trim(),
+        'password': _password.text,
+        'phone': _phone.text.trim(),
+        'phoneCode': _phoneCode.text.trim(),
+        'role': _contractor ? 'contractor' : 'customer',
+        'area': _area.text.trim(),
+        'service': _contractor ? _service : '',
+      });
     }
     if (!mounted) return;
     final result = ref.read(authProvider);
     if (!_login &&
         result.maybeWhen(unauthenticated: () => true, orElse: () => false)) {
-      ref
-          .read(registrationDetailsProvider.notifier)
-          .save(
-            phone: _phone.text.trim(),
-            area: _area.text.trim(),
-            service: _contractor ? _service : '',
-          );
       context.go('/login');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Account created. Sign in to continue.')),
@@ -126,6 +120,60 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
     });
   }
 
+  Future<void> _sendPhoneCode() async {
+    setState(() {
+      _busy = true;
+      _feedback = null;
+    });
+    try {
+      await ref
+          .read(apiClientProvider)
+          .post(
+            '/auth/phone-verification',
+            data: {'phone': _phone.text.trim()},
+          );
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Verification code sent.')),
+        );
+    } catch (error) {
+      if (mounted) setState(() => _feedback = apiError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    try {
+      final client = ref.read(apiClientProvider);
+      if (_codeRequested) {
+        await client.post(
+          '/auth/password-reset/confirm',
+          data: {'code': _resetCode.text.trim(), 'password': _password.text},
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Password changed. Sign in again.')),
+        );
+        context.go('/login');
+      } else {
+        await client.post(
+          '/auth/password-reset/request',
+          data: {'email': _email.text.trim()},
+        );
+        if (mounted)
+          setState(() {
+            _codeRequested = true;
+            _feedback = 'If the address belongs to an account, check your email for a reset code.';
+          });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _feedback = apiError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Widget _field(
     TextEditingController controller,
     String label,
@@ -148,6 +196,12 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final restoring = ref
+        .watch(authProvider)
+        .maybeWhen(initial: () => true, orElse: () => false);
+    final verification = !_login && !_reset
+        ? ref.watch(_phoneVerificationProvider)
+        : null;
     final title = switch (widget.mode) {
       AuthMode.login => 'Welcome to Eden',
       AuthMode.customer => 'Create a customer account',
@@ -182,17 +236,18 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                     children: [
                       if (!_login && !_reset)
                         _field(_name, 'Full name', Icons.person_outline),
-                      _field(
-                        _email,
-                        'Email address',
-                        Icons.mail_outline,
-                        keyboard: TextInputType.emailAddress,
-                        validate: (value) =>
-                            RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
-                                .hasMatch(value)
-                            ? null
-                            : 'Enter a valid email address',
-                      ),
+                      if (!_reset || !_codeRequested)
+                        _field(
+                          _email,
+                          'Email address',
+                          Icons.mail_outline,
+                          keyboard: TextInputType.emailAddress,
+                          validate: (value) =>
+                              RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+                                  .hasMatch(value)
+                              ? null
+                              : 'Enter a valid email address',
+                        ),
                       if (!_login && !_reset)
                         _field(
                           _phone,
@@ -204,16 +259,26 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                               ? 'Enter a valid phone number'
                               : null,
                         ),
-                      if (!_login && !_reset)
+                      if (verification?.value == true) ...[
+                        OutlinedButton(
+                          onPressed: _busy ? null : _sendPhoneCode,
+                          child: const Text('Send SMS code'),
+                        ),
                         _field(
-                          _verificationCode,
-                          'Demo verification code (123456)',
+                          _phoneCode,
+                          'SMS verification code',
                           Icons.sms_outlined,
                           keyboard: TextInputType.number,
-                          validate: (value) => value == '123456'
-                              ? null
-                              : 'Enter the sample code 123456',
                         ),
+                      ],
+                      if (verification?.hasError == true)
+                        TextButton(
+                          onPressed: () =>
+                              ref.invalidate(_phoneVerificationProvider),
+                          child: const Text('Retry loading registration'),
+                        ),
+                      if (_reset && _codeRequested)
+                        _field(_resetCode, 'Reset code', Icons.key_outlined),
                       if (_contractor) ...[
                         _field(
                           _area,
@@ -241,7 +306,7 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                               : (value) => setState(() => _service = value!),
                         ),
                       ],
-                      if (!_reset || _resetRequested)
+                      if (!_reset || _codeRequested)
                         TextFormField(
                           controller: _password,
                           enabled: !_busy,
@@ -280,14 +345,6 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                             child: const Text('Forgot password?'),
                           ),
                         ),
-                      if (_reset && _feedback != null && !_resetRequested)
-                        TextButton(
-                          onPressed: () => setState(() {
-                            _resetRequested = true;
-                            _feedback = null;
-                          }),
-                          child: const Text('Open sample reset link'),
-                        ),
                       if (_feedback != null)
                         Text(
                           _feedback!,
@@ -300,7 +357,13 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton(
-                          onPressed: _busy ? null : _submit,
+                          onPressed:
+                              _busy ||
+                                  restoring ||
+                                  verification?.isLoading == true ||
+                                  verification?.hasError == true
+                              ? null
+                              : _submit,
                           child: _busy
                               ? const SizedBox.square(
                                   dimension: 20,
@@ -309,13 +372,11 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                                   ),
                                 )
                               : Text(
-                                  _login
-                                      ? 'Sign in'
-                                      : _reset
-                                      ? (_resetRequested
-                                            ? 'Set demo password'
-                                            : 'Request reset link')
-                                      : 'Create account',
+                                  _reset
+                                      ? (_codeRequested
+                                            ? 'Set new password'
+                                            : 'Email reset code')
+                                      : (_login ? 'Sign in' : 'Create account'),
                                 ),
                         ),
                       ),

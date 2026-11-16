@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/network/api_client.dart';
+import '../../../auth/data/repositories/auth_repository.dart';
+import '../../../auth/providers/auth_provider.dart';
+import '../../preferences.dart';
 import '../../marketplace.dart';
 import 'marketplace_screens.dart';
 
@@ -22,7 +26,6 @@ typedef DemoSettings = ({
   bool available,
   int? snowProperty,
   int threshold,
-  List<String> tickets,
 });
 
 final demoSettingsProvider =
@@ -32,29 +35,30 @@ final demoSettingsProvider =
 
 class DemoSettingsNotifier extends Notifier<DemoSettings> {
   @override
-  DemoSettings build() => (
-    notifications: true,
-    available: true,
-    snowProperty: null,
-    threshold: 2,
-    tickets: const [],
-  );
+  DemoSettings build() {
+    final saved = ref.watch(preferencesProvider).value ?? const {};
+    return (
+      notifications: saved['notifications'] as bool? ?? true,
+      available: saved['available'] as bool? ?? true,
+      snowProperty: saved['snowProperty'] as int?,
+      threshold: saved['threshold'] as int? ?? 2,
+    );
+  }
 
   void update({
     bool? notifications,
     bool? available,
     int? property,
     int? threshold,
-    String? ticket,
     bool clearSnow = false,
   }) {
-    state = (
-      notifications: notifications ?? state.notifications,
-      available: available ?? state.available,
-      snowProperty: clearSnow ? null : property ?? state.snowProperty,
-      threshold: threshold ?? state.threshold,
-      tickets: ticket == null ? state.tickets : [...state.tickets, ticket],
-    );
+    savePreferences(ref, {
+      if (notifications != null) 'notifications': notifications,
+      if (available != null) 'available': available,
+      if (clearSnow || property != null)
+        'snowProperty': clearSnow ? null : property,
+      if (threshold != null) 'threshold': threshold,
+    });
   }
 }
 
@@ -72,14 +76,46 @@ final payoutRequestedProvider = NotifierProvider<PayoutRequested, double>(
 
 class PayoutRequested extends Notifier<double> {
   @override
-  double build() => 0;
+  double build() {
+    ref.watch(activeAccountIdProvider);
+    return 0;
+  }
+
   void request(double amount) => state += amount;
 }
+
+final supportRequestsProvider =
+    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+      final response = await ref.watch(apiClientProvider).get('/support');
+      return (response.data as List).cast<Map<String, dynamic>>();
+    });
 
 class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
   final _ticket = TextEditingController();
   final _supportForm = GlobalKey<FormState>();
+  bool _sending = false;
   int? _property;
+
+  Future<void> _sendTicket() async {
+    if (!_supportForm.currentState!.validate()) return;
+    setState(() => _sending = true);
+    try {
+      await ref
+          .read(apiClientProvider)
+          .post('/support', data: {'description': _ticket.text.trim()});
+      if (!mounted) return;
+      _ticket.clear();
+      ref.invalidate(supportRequestsProvider);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(apiError(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   int? _threshold;
 
   @override
@@ -129,9 +165,7 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
                 value: settings.notifications,
                 onChanged: (value) => notifier.update(notifications: value),
               ),
-              const Text(
-                'This demo saves your preference for the current session.',
-              ),
+              const Text('Your preference is saved to your account.'),
             ],
             SettingsSection.verification => [
               SwitchListTile(
@@ -181,21 +215,30 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
                 ),
               ),
               FilledButton(
-                onPressed: () {
-                  if (!_supportForm.currentState!.validate()) return;
-                  notifier.update(ticket: _ticket.text.trim());
-                  _ticket.clear();
-                },
-                child: const Text('Save support request'),
+                onPressed: _sending ? null : _sendTicket,
+                child: const Text('Send support request'),
               ),
-              if (settings.tickets.isNotEmpty)
-                const Text('Requests saved in this session'),
-              for (final ticket in settings.tickets)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.description_outlined),
-                  title: Text(ticket),
-                ),
+              ...ref
+                  .watch(supportRequestsProvider)
+                  .when(
+                    data: (tickets) => [
+                      for (final ticket in tickets)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(ticket['description'] as String),
+                          subtitle: Text(ticket['status'] as String),
+                        ),
+                    ],
+                    loading: () => const [LinearProgressIndicator()],
+                    error: (error, _) => [
+                      Text(apiError(error)),
+                      TextButton(
+                        onPressed: () =>
+                            ref.invalidate(supportRequestsProvider),
+                        child: const Text('Reload requests'),
+                      ),
+                    ],
+                  ),
             ],
             SettingsSection.automatic => [
               if (properties.isEmpty)
@@ -253,7 +296,7 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
                       .firstOrNull
                   case final property?)
                 OutlinedButton(
-                  onPressed: () {
+                  onPressed: () async {
                     final existing = bookings.any(
                       (booking) =>
                           booking.property.id == property.id &&
@@ -263,17 +306,16 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
                       context.go('/bookings');
                       return;
                     }
-                    ref
+                    final placed = await ref
                         .read(bookingsProvider.notifier)
                         .place(
                           property,
                           Service.snow,
                           DateTime.now().add(const Duration(days: 1)),
-                          50.85,
                           'Proposed from a sample snowfall.',
                           false,
                         );
-                    context.go('/bookings');
+                    if (placed && context.mounted) context.go('/bookings');
                   },
                   child: Text('Simulate ${settings.threshold} in of snow'),
                 ),

@@ -8,11 +8,12 @@ aside { padding: 32px 20px; background: #143d2d; color: white; }
 nav { display: grid; gap: 8px; }
 button, select, input { font: inherit; }
 button { background: transparent; border: 0; color: inherit; cursor: pointer; padding: 12px; border-radius: 9px; text-align: left; }
-button[aria-pressed=true] { background: #2c634b; }
+nav a { color: inherit; padding: 12px; border-radius: 9px; text-decoration: none; }
+nav a[aria-current=page], nav a:hover { background: #2c634b; }
 main { width: 100%; max-width: 1180px; margin: auto; align-self: start; padding: clamp(16px, 4vw, 48px); }
 header { border-radius: 20px; padding: 30px; background: linear-gradient(120deg,#154d36,#327752); color: white; }
 header p { color: #d1ebd9; margin-top: 7px; }
-.metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 14px; margin: 20px 0; }
+ .metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(140px, 100%),1fr)); gap: 14px; margin: 20px 0; }
 .metrics article, .records { background: white; border: 1px solid #dce8de; border-radius: 16px; padding: 18px; }
 .metrics strong { display: block; margin-top: 6px; font-size: 30px; }
 .toolbar, .record { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
@@ -20,3 +21,9 @@ header p { color: #d1ebd9; margin-top: 7px; }
 .record small, .record p { color: #466556; }
 input, select { max-width: 100%; border: 1px solid #c6d9cb; border-radius: 8px; padding: 8px; color: inherit; background: white; }
 @media (max-width: 680px) { .shell { display: block; } aside { padding: 16px; } .brand { margin-bottom: 10px; } nav { display: flex; flex-wrap: wrap; } }
+
+.record > div { min-width: 0; overflow-wrap: anywhere; }
+.record-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.record-actions button { background: #154d36; color: white; }
+.toolbar label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+.shell { grid-template-columns: 220px minmax(0, 1fr); }

@@ -1,15 +1,16 @@
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../../core/network/api_client.dart';
+import '../../marketplace.dart';
+import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../auth/domain/auth_state.dart';
 import '../../../auth/providers/auth_provider.dart';
-import '../../marketplace.dart';
-import 'demo_settings_screen.dart';
-import 'account_extras_screen.dart';
 import 'marketplace_screens.dart';
 
 Future<Uint8List?> selectDemoImage(BuildContext context) async {
@@ -20,14 +21,14 @@ Future<Uint8List?> selectDemoImage(BuildContext context) async {
       imageQuality: 85,
     );
     if (image == null) return null;
-    if (await image.length() > 10 * 1024 * 1024) {
+    if (await image.length() > 2 * 1024 * 1024) {
       throw const FormatException('Image too large');
     }
     return await image.readAsBytes();
   } catch (_) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Choose an image under 10 MB.')),
+        const SnackBar(content: Text('Choose an image under 2 MB.')),
       );
     }
     return null;
@@ -51,15 +52,23 @@ class DemoImage extends StatelessWidget {
   );
 }
 
-final profilePhotoProvider = NotifierProvider<ProfilePhoto, Uint8List?>(
-  ProfilePhoto.new,
-);
+final accountImageProvider = FutureProvider.autoDispose
+    .family<Uint8List?, String>((ref, kind) async {
+      if (ref.watch(activeAccountIdProvider) == null) return null;
+      final response = await ref
+          .watch(apiClientProvider)
+          .get('/account-images/$kind');
+      final image = response.data['image'] as String?;
+      return image == null ? null : base64Decode(image);
+    });
 
-class ProfilePhoto extends Notifier<Uint8List?> {
-  @override
-  Uint8List? build() => null;
-
-  void save(Uint8List? photo) => state = photo;
+Future<void> _saveImage(WidgetRef ref, String kind, Uint8List? bytes) async {
+  await ref
+      .read(apiClientProvider)
+      .post(
+        '/account-images/$kind',
+        data: {'image': bytes == null ? null : base64Encode(bytes)},
+      );
 }
 
 class EditProfileScreen extends ConsumerStatefulWidget {
@@ -80,7 +89,9 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     text: ref.read(registrationDetailsProvider).phone,
   );
   bool _deleting = false;
-  late Uint8List? _photo = ref.read(profilePhotoProvider);
+  bool _saving = false;
+  Uint8List? _photo;
+  bool _photoEdited = false;
 
   @override
   void dispose() {
@@ -100,6 +111,9 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         children: [Text('Sign in to edit your profile.')],
       );
     }
+    final photo = _photoEdited
+        ? _photo
+        : ref.watch(accountImageProvider('profile')).value;
     return MarketPage(
       title: 'Edit profile',
       children: [
@@ -108,18 +122,25 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
           key: _form,
           child: MarketCard(
             children: [
-              if (_photo case final photo?) DemoImage(photo),
+              if (photo != null) DemoImage(photo),
               OutlinedButton.icon(
                 icon: const Icon(Icons.image_outlined),
                 label: const Text('Choose profile photo'),
                 onPressed: () async {
                   final photo = await selectDemoImage(context);
-                  if (photo != null && mounted) setState(() => _photo = photo);
+                  if (photo != null && mounted)
+                    setState(() {
+                      _photo = photo;
+                      _photoEdited = true;
+                    });
                 },
               ),
-              if (_photo != null)
+              if (photo != null)
                 TextButton(
-                  onPressed: () => setState(() => _photo = null),
+                  onPressed: () => setState(() {
+                    _photo = null;
+                    _photoEdited = true;
+                  }),
                   child: const Text('Remove profile photo'),
                 ),
               TextFormField(
@@ -141,25 +162,33 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 },
               ),
               FilledButton(
-                onPressed: _deleting
+                onPressed: _deleting || _saving
                     ? null
-                    : () {
+                    : () async {
                         if (!_form.currentState!.validate()) return;
-                        final details = ref.read(registrationDetailsProvider);
-                        ref
-                            .read(registrationDetailsProvider.notifier)
-                            .save(
-                              phone: _phone.text.trim(),
-                              area: details.area,
-                              service: details.service,
-                            );
-                        ref
-                            .read(authProvider.notifier)
-                            .updateProfile(
-                              user.copyWith(name: _name.text.trim()),
-                            );
-                        ref.read(profilePhotoProvider.notifier).save(_photo);
-                        context.pop();
+                        setState(() => _saving = true);
+                        try {
+                          await ref
+                              .read(authProvider.notifier)
+                              .updateProfile(
+                                user.copyWith(name: _name.text.trim()),
+                                _phone.text.trim(),
+                              );
+                          if (!mounted) return;
+                          if (_photoEdited) {
+                            await _saveImage(ref, 'profile', _photo);
+                            if (!mounted) return;
+                            ref.invalidate(accountImageProvider('profile'));
+                          }
+                          if (context.mounted) context.pop();
+                        } catch (error) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(apiError(error))),
+                          );
+                        } finally {
+                          if (mounted) setState(() => _saving = false);
+                        }
                       },
                 child: const Text('Save changes'),
               ),
@@ -169,15 +198,15 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         MarketCard(
           children: [
             TextButton(
-              onPressed: _deleting
+              onPressed: _deleting || _saving
                   ? null
                   : () async {
                       final confirm = await showDialog<bool>(
                         context: context,
                         builder: (dialog) => AlertDialog(
-                          title: const Text('Delete demo account?'),
+                          title: const Text('Delete account?'),
                           content: const Text(
-                            'This clears your account and marketplace changes from this session.',
+                            'This deletes your account and support requests.',
                           ),
                           actions: [
                             TextButton(
@@ -194,19 +223,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       if (!mounted || confirm != true) return;
                       setState(() => _deleting = true);
                       try {
-                        await ref
-                            .read(authProvider.notifier)
-                            .deleteAccount(user.email);
-                        if (!context.mounted) return;
-                        ref.invalidate(registrationDetailsProvider);
-                        ref.invalidate(propertiesProvider);
-                        ref.invalidate(bookingsProvider);
-                        ref.invalidate(demoSettingsProvider);
-                        ref.invalidate(localAccountProvider);
-                        ref.invalidate(profilePhotoProvider);
-                        ref.invalidate(payoutRequestedProvider);
-                        ref.invalidate(verificationProvider);
-                        context.go('/login');
+                        await ref.read(authProvider.notifier).deleteAccount();
                       } catch (_) {
                         if (!context.mounted) return;
                         setState(() => _deleting = false);
@@ -218,7 +235,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       }
                     },
               child: Text(
-                'Delete demo account',
+                'Delete account',
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
@@ -229,46 +246,79 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   }
 }
 
-final verificationProvider =
-    NotifierProvider<Verification, Map<String, Uint8List>>(Verification.new);
-
-class Verification extends Notifier<Map<String, Uint8List>> {
-  @override
-  Map<String, Uint8List> build() => const {};
-
-  void attach(String kind, Uint8List bytes) => state = {...state, kind: bytes};
-}
+final contractorVerificationProvider = FutureProvider.autoDispose<String>((
+  ref,
+) async {
+  if (ref.watch(activeAccountIdProvider) == null) return 'Incomplete';
+  final response = await ref
+      .watch(apiClientProvider)
+      .get('/contractor/verification');
+  return response.data['status'] as String;
+});
 
 class VerificationScreen extends ConsumerWidget {
   const VerificationScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final files = ref.watch(verificationProvider);
+    final verification = ref.watch(contractorVerificationProvider);
     return MarketPage(
       title: 'Verification documents',
       children: [
         const MarketBanner(
           'Verification documents',
-          'Use sample images in this demo. Files are held in this session.',
+          'Upload your ID and insurance. Eden reviews both documents before you can accept jobs.',
           Icons.verified_user_outlined,
         ),
-        for (final kind in ['Identification', 'Insurance'])
+        MarketCard(
+          children: [
+            Text(
+              verification.when(
+                data: (status) => switch (status) {
+                  'Approved' => 'Approved. You can accept jobs.',
+                  'Rejected' =>
+                    'Documents need changes. Upload replacements for review.',
+                  'Pending' =>
+                    'Both documents uploaded. Waiting for admin approval.',
+                  _ => 'Upload both documents to get verified.',
+                },
+                loading: () => 'Checking verification status…',
+                error: (_, _) => 'Could not check verification status.',
+              ),
+            ),
+            TextButton(
+              onPressed: () => ref.invalidate(contractorVerificationProvider),
+              child: const Text('Refresh status'),
+            ),
+          ],
+        ),
+        for (final (kind, label) in [
+          ('identification', 'Identification'),
+          ('insurance', 'Insurance'),
+        ])
           MarketCard(
             children: [
-              Text(kind, style: Theme.of(context).textTheme.titleLarge),
-              if (files[kind] case final bytes?) DemoImage(bytes),
+              Text(label, style: Theme.of(context).textTheme.titleLarge),
+              if (ref.watch(accountImageProvider(kind)).value case final bytes?)
+                DemoImage(bytes),
               OutlinedButton.icon(
                 icon: const Icon(Icons.attach_file),
-                label: Text(
-                  files.containsKey(kind)
-                      ? 'Replace sample image'
-                      : 'Choose sample image',
-                ),
+                label: const Text('Upload image'),
                 onPressed: () async {
                   final bytes = await selectDemoImage(context);
                   if (bytes != null && context.mounted) {
-                    ref.read(verificationProvider.notifier).attach(kind, bytes);
+                    try {
+                      await _saveImage(ref, kind, bytes);
+                      if (context.mounted) {
+                        ref.invalidate(accountImageProvider(kind));
+                        ref.invalidate(contractorVerificationProvider);
+                      }
+                    } catch (error) {
+                      if (context.mounted)
+                        ref
+                            .read(marketplaceFeedbackProvider.notifier)
+                            .report(error);
+                    }
                   }
                 },
               ),
