@@ -34,8 +34,21 @@ export function image(value) {
 
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
 const property = row => ({ ...parse(row.details), id: row.id });
+const primaryServiceIds = new Map([
+  ['Snow removal', 'snow'],
+  ['Lawn mowing', 'lawn'],
+  ['House cleaning', 'cleaning'],
+]);
+
+function matchesOffer(details, user) {
+  const city = details.property?.address?.split(',')[1]?.trim().toLowerCase();
+  return Boolean(city && city === user.area?.trim().toLowerCase() &&
+    details.service === primaryServiceIds.get(user.service) &&
+    !details.releasedBy?.includes(user.id));
+}
+
 const booking = row => {
-  const { location, ...details } = parse(row.details);
+  const { location, releasedBy, ...details } = parse(row.details);
   return { ...details, id: row.id, status: row.status, version: row.version };
 };
 
@@ -126,12 +139,12 @@ export async function marketplace({ method, path, user, run, first, read }) {
         (b.status = 'searching' AND b.customer_id <> ? AND NOT EXISTS (SELECT 1 FROM preferences p WHERE p.user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(p.details, '$.available')) = 'false') AND NOT EXISTS (
           SELECT 1 FROM declined_jobs d WHERE d.booking_id = b.id AND d.contractor_id = ?))
         ORDER BY b.id DESC`, user.id, user.id, user.id, user.id);
-      return records.map(row => {
+      return records.filter(row => row.contractor_id === user.id ||
+        matchesOffer(parse(row.details), user)).map(row => {
         const job = booking(row);
         if (row.contractor_id !== user.id) {
           const location = job.property;
-          const area = location.address.split(',').slice(-1)[0].trim();
-          job.property = { id: location.id, name: 'Service property', address: area === location.address ? 'Address shared after acceptance' : area,
+          job.property = { id: location.id, name: 'Service property', address: user.area,
             type: location.type, size: location.size, notes: '', photo: null, pin: null };
           job.notes = '';
           job.referencePhoto = null;
@@ -172,8 +185,9 @@ export async function marketplace({ method, path, user, run, first, read }) {
     const customer = user.role === 'customer' && row.customer_id === user.id;
     const assigned = user.role === 'contractor' && row.contractor_id === user.id;
     const available = user.role === 'contractor' && !await first("SELECT 1 FROM preferences WHERE user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(details, '$.available')) = 'false'", user.id);
-    const offered = available && row.customer_id && row.customer_id !== user.id && row.status === 'searching';
     const details = parse(row.details);
+    const offered = available && row.customer_id && row.customer_id !== user.id &&
+      row.status === 'searching' && matchesOffer(details, user);
     let status = row.status;
     let contractor = row.contractor_id;
     if (offered && body.action === 'decline') {
@@ -192,6 +206,13 @@ export async function marketplace({ method, path, user, run, first, read }) {
       if (!customer && !assigned) error(404, 'Booking unavailable.');
       if (status === 'cancelled') error(409, 'This booking was cancelled.');
       switch (body.action) {
+        case 'release':
+          if (!assigned || status !== 'accepted') error(409, 'Only accepted jobs can be released before departure.');
+          status = 'searching';
+          contractor = null;
+          details.releasedBy = [...(details.releasedBy ?? []), user.id];
+          details.messages = [];
+          break;
         case 'advance':
           if (assigned && typeof body.status === 'string' && transitions[status] === body.status &&
               (status !== 'arrived' || details.before) && (status !== 'working' || details.after)) {
@@ -240,7 +261,7 @@ export async function marketplace({ method, path, user, run, first, read }) {
     const result = await run(`UPDATE bookings SET details = ?, status = ?, contractor_id = ?, version = version + 1
       WHERE id = ? AND version = ?`, JSON.stringify(details), status, contractor, id, row.version);
     if (!result.affectedRows) error(409, 'The booking changed. Refresh and try again.');
-    return { ...details, id, status, version: row.version + 1 };
+    return booking({ id, status, version: row.version + 1, details });
   }
   return undefined;
 }

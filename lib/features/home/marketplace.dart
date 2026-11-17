@@ -417,4 +417,8 @@ class Bookings extends MarketplaceRecords<Booking> {
       await api.post('$path/$id', data: command);
     });
   }
+
+  Future<bool> release(int id) => saveChange((api) async {
+    await api.post('$path/$id', data: {'action': 'release'});
+  });
 }

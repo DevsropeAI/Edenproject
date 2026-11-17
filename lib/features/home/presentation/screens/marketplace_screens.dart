@@ -102,7 +102,9 @@ class ContractorNavigation extends StatelessWidget {
         selectedIndex: index,
         onSelected: (selected) {
           if (selected == index) return;
-          context.go(['/contractor-home', '/settings/wallet', '/profile'][selected]);
+          context.go(
+            ['/contractor-home', '/settings/wallet', '/profile'][selected],
+          );
         },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.work_outline), label: 'Jobs'),
@@ -141,10 +143,7 @@ Future<T?> showCustomerDialog<T>({
 
 bool _customerTheme(WidgetRef ref) => ref
     .watch(authProvider)
-    .maybeWhen(
-      authenticated: (_) => true,
-      orElse: () => false,
-    );
+    .maybeWhen(authenticated: (_) => true, orElse: () => false);
 EdenStatus _bookingStatus(JobStatus status) => switch (status) {
   JobStatus.searching => EdenStatus.pending,
   JobStatus.completed => EdenStatus.complete,
@@ -191,7 +190,11 @@ class MarketPage extends StatelessWidget {
             (darkNavigation is CustomerNavigation
                 ? (darkNavigation as CustomerNavigation).index
                 : darkNavigation is ContractorNavigation
-                ? const [0, 1, 3][(darkNavigation as ContractorNavigation).index]
+                ? const [
+                    0,
+                    1,
+                    3,
+                  ][(darkNavigation as ContractorNavigation).index]
                 : null)) {
           0 => MainBackdrop.home,
           1 => MainBackdrop.orders,
@@ -554,7 +557,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
               _field(_name, 'Property name', required: true),
               _field(
                 _address,
-                'Street address, city and postal code',
+                'Street address, city, postal code',
                 required: true,
               ),
               DropdownButtonFormField<String>(
@@ -996,7 +999,7 @@ class BookingListScreen extends ConsumerWidget {
             EmptyState(
               icon: Icons.inbox_outlined,
               message: available
-                  ? 'No jobs to show right now. New requests will appear here.'
+                  ? 'New requests that match your primary service and city will appear here.'
                   : 'You are offline. Turn on availability to see new jobs.',
               action: TextButton(
                 onPressed: () => ref.read(bookingsProvider.notifier).refresh(),
@@ -1050,37 +1053,35 @@ class BookingListScreen extends ConsumerWidget {
               if (contractor)
                 _JobCard(booking: booking)
               else
-              MarketCard(
-                children: [
-                  MarketHeading(booking.service.label, compact: true),
-                  Text(booking.property.address),
-                  Text(
-                    '${_date.format(booking.date)} · ${_money.format(booking.total)} CAD',
-                  ),
-                  Wrap(
-                    spacing: 12,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      StatusChip(
-                        label: booking.status.label,
-                        status: _bookingStatus(booking.status),
-                      ),
-                      TextButton(
-                        onPressed: () => context.push(
-                          '/${contractor ? 'job-details' : 'bookings'}/${booking.id}',
+                MarketCard(
+                  children: [
+                    MarketHeading(booking.service.label, compact: true),
+                    Text(booking.property.address),
+                    Text(
+                      '${_date.format(booking.date)} · ${_money.format(booking.total)} CAD',
+                    ),
+                    Wrap(
+                      spacing: 12,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        StatusChip(
+                          label: booking.status.label,
+                          status: _bookingStatus(booking.status),
                         ),
-                        child: const Text('View details'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                        TextButton(
+                          onPressed: () => context.push(
+                            '/${contractor ? 'job-details' : 'bookings'}/${booking.id}',
+                          ),
+                          child: const Text('View details'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
           ],
         if (contractor) ...[
           const _ContractorShortcuts(),
-          MarketCard(
-            children: [ModeSwitchTile(contractor: true, area: area)],
-          ),
+          MarketCard(children: [ModeSwitchTile(contractor: true, area: area)]),
         ],
       ],
     );
@@ -1550,6 +1551,34 @@ class BookingDetailsScreen extends ConsumerWidget {
               icon: Icons.directions_car_outlined,
               onConfirm: () => advance(JobStatus.enRoute),
             ),
+          if (booking.status == JobStatus.accepted)
+            OutlinedButton(
+              onPressed: () async {
+                final confirmed = await showCustomerDialog<bool>(
+                  context: context,
+                  builder: (dialog) => AlertDialog(
+                    title: const Text('Release this job?'),
+                    content: const Text(
+                      'The booking will return to the job list for other matching contractors.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialog, false),
+                        child: const Text('Keep job'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(dialog, true),
+                        child: const Text('Release job'),
+                      ),
+                    ],
+                  ),
+                );
+                if (!context.mounted || confirmed != true) return;
+                final released = await notifier.release(booking.id);
+                if (context.mounted && released) context.go('/contractor-home');
+              },
+              child: const Text('Release job'),
+            ),
           if (booking.status == JobStatus.enRoute)
             MarketCard(
               children: [
@@ -1952,8 +1981,6 @@ class ProfileScreen extends ConsumerWidget {
     );
   }
 }
-
-
 
 // import '../../../../core/theme/app_colors.dart';
 // import '../../../../core/theme/app_dark_theme.dart';

@@ -31,7 +31,7 @@ const server = createApi({
     from: EDEN_EMAIL_FROM, to: email, subject: 'Reset your Eden password',
     text: 'Enter this code in Eden to choose a new password. The code expires in 20 minutes.\n\n' + code,
   }) : undefined,
-}).listen(port, process.env.HOST ?? '127.0.0.1', () => {
+}).listen(port, process.env.HOST ?? '0.0.0.0', () => {
   console.log('Eden API listening on port ' + port);
 });
 if (process.env.EDEN_ENABLE_WEEKLY_ORDERS === 'true') {

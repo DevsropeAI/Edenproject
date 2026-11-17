@@ -7,6 +7,6 @@ class AppConfig {
   static String get apiBaseUrl => _configuredUrl.isNotEmpty
       ? _configuredUrl
       : !kIsWeb && defaultTargetPlatform == TargetPlatform.android
-      ? 'http://10.0.2.2:3001/api'
+      ? 'http://172.16.1.2:3001/api'
       : 'http://localhost:3001/api';
 }
