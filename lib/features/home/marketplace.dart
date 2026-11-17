@@ -88,6 +88,15 @@ class Property {
   }
 }
 
+typedef OrderNotice = ({JobStatus status, int version, DateTime at});
+
+String orderNoticeText(JobStatus status) => switch (status) {
+  JobStatus.accepted => 'A contractor accepted your booking',
+  JobStatus.enRoute => 'Your contractor is on the way',
+  JobStatus.submitted => 'Work is ready for your approval',
+  _ => status.label,
+};
+
 class Booking {
   const Booking({
     required this.id,
@@ -106,6 +115,7 @@ class Booking {
     this.rating,
     this.review = '',
     this.declined = false,
+    this.customerNotices = const [],
   });
 
   final int id;
@@ -124,6 +134,7 @@ class Booking {
   final int? rating;
   final String review;
   final bool declined;
+  final List<OrderNotice> customerNotices;
 
   factory Booking.fromJson(Map<String, dynamic> json) => Booking(
     id: json['id'] as int,
@@ -140,6 +151,14 @@ class Booking {
     after: _decodeImage(json['after']),
     rating: json['rating'] as int?,
     review: json['review'] as String? ?? '',
+    customerNotices: [
+      for (final notice in json['customerNotices'] as List? ?? const [])
+        (
+          status: JobStatus.values.byName(notice['status'] as String),
+          version: notice['version'] as int,
+          at: DateTime.parse(notice['at'] as String).toLocal(),
+        ),
+    ],
     messages: [
       for (final message in json['messages'] as List)
         (
@@ -176,6 +195,7 @@ class Booking {
     rating: rating ?? this.rating,
     review: review ?? this.review,
     declined: declined ?? this.declined,
+    customerNotices: customerNotices,
   );
 }
 

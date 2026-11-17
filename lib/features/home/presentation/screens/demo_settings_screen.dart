@@ -141,6 +141,12 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
         .where((item) => item.id == (_property ?? settings.snowProperty))
         .firstOrNull;
     final bookings = ref.watch(bookingsProvider);
+    final notices = [
+      if (!contractor && section == SettingsSection.preferences)
+        for (final booking in bookings)
+          for (final notice in booking.customerNotices)
+            (booking: booking, notice: notice),
+    ]..sort((a, b) => b.notice.at.compareTo(a.notice.at));
     final completed = bookings.where(
       (item) => item.status == JobStatus.completed,
     );
@@ -152,9 +158,7 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
 
     return MarketPage(
       dark: true,
-      customerTab: !contractor && section == SettingsSection.support
-          ? 2
-          : null,
+      customerTab: !contractor && section == SettingsSection.support ? 2 : null,
       darkNavigation: contractor && section == SettingsSection.wallet
           ? const ContractorNavigation(index: 1)
           : null,
@@ -176,11 +180,32 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
           children: switch (section) {
             SettingsSection.preferences => [
               SwitchListTile(
-                title: const Text('Booking updates'),
+                title: const Text('In-app booking alerts'),
                 value: settings.notifications,
                 onChanged: (value) => notifier.update(notifications: value),
               ),
               const Text('Your preference is saved to your account.'),
+              if (!contractor) ...[
+                const Divider(),
+                const MarketHeading('Order updates'),
+                if (notices.isEmpty)
+                  const Text(
+                    'Updates will appear here when a contractor accepts a booking, heads your way, or submits work.',
+                  ),
+                for (final entry in notices)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.notifications_outlined),
+                    title: Text(orderNoticeText(entry.notice.status)),
+                    subtitle: Text(
+                      '#${entry.booking.id} · ${entry.booking.service.label}\n'
+                      '${MaterialLocalizations.of(context).formatShortDate(entry.notice.at)} · '
+                      '${TimeOfDay.fromDateTime(entry.notice.at).format(context)}',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push('/bookings/${entry.booking.id}'),
+                  ),
+              ],
             ],
             SettingsSection.verification => [
               SwitchListTile(
@@ -362,7 +387,6 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
     );
   }
 }
-
 
 // import 'package:flutter/material.dart';
 // import 'package:go_router/go_router.dart';

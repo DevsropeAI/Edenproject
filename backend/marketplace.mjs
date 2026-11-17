@@ -5,6 +5,7 @@ const transitions = {
   accepted: 'enRoute', enRoute: 'arrived', arrived: 'working',
   working: 'submitted',
 };
+const customerNoticeStatuses = new Set(['accepted', 'enRoute', 'submitted']);
 
 function error(status, message) {
   throw Object.assign(new Error(message), { status });
@@ -46,6 +47,15 @@ function matchesOffer(details, user) {
     details.service === primaryServiceIds.get(user.service) &&
     !details.releasedBy?.includes(user.id));
 }
+
+function offerDetails(row) {
+  const details = parse(row.details);
+  if (row.status !== 'searching' || row.current_property == null) return details;
+  return { ...details, property: { ...parse(row.current_property), id: details.property.id } };
+}
+
+const currentPropertyJoin = `LEFT JOIN properties p ON p.owner = b.customer_id
+  AND p.id = JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.property.id'))`;
 
 const booking = row => {
   const { location, releasedBy, ...details } = parse(row.details);
@@ -135,13 +145,14 @@ export async function marketplace({ method, path, user, run, first, read }) {
       if (user.role === 'customer') {
         return (await run('SELECT * FROM bookings WHERE customer_id = ? ORDER BY id DESC', user.id)).map(booking);
       }
-      const records = await run(`SELECT b.* FROM bookings b WHERE b.contractor_id = ? OR
+      const records = await run(`SELECT b.*, p.details AS current_property FROM bookings b
+        ${currentPropertyJoin} WHERE b.contractor_id = ? OR
         (b.status = 'searching' AND b.customer_id <> ? AND NOT EXISTS (SELECT 1 FROM preferences p WHERE p.user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(p.details, '$.available')) = 'false') AND NOT EXISTS (
           SELECT 1 FROM declined_jobs d WHERE d.booking_id = b.id AND d.contractor_id = ?))
         ORDER BY b.id DESC`, user.id, user.id, user.id, user.id);
       return records.filter(row => row.contractor_id === user.id ||
-        matchesOffer(parse(row.details), user)).map(row => {
-        const job = booking(row);
+        matchesOffer(offerDetails(row), user)).map(row => {
+        const job = booking({ ...row, details: offerDetails(row) });
         if (row.contractor_id !== user.id) {
           const location = job.property;
           job.property = { id: location.id, name: 'Service property', address: user.area,
@@ -180,12 +191,13 @@ export async function marketplace({ method, path, user, run, first, read }) {
   if (method === 'POST' && match) {
     const id = Number(match[1]);
     const body = await read();
-    const row = await first('SELECT * FROM bookings WHERE id = ?', id);
+    const row = await first(`SELECT b.*, p.details AS current_property FROM bookings b
+      ${currentPropertyJoin} WHERE b.id = ?`, id);
     if (!row) error(404, 'Booking unavailable.');
     const customer = user.role === 'customer' && row.customer_id === user.id;
     const assigned = user.role === 'contractor' && row.contractor_id === user.id;
     const available = user.role === 'contractor' && !await first("SELECT 1 FROM preferences WHERE user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(details, '$.available')) = 'false'", user.id);
-    const details = parse(row.details);
+    const details = offerDetails(row);
     const offered = available && row.customer_id && row.customer_id !== user.id &&
       row.status === 'searching' && matchesOffer(details, user);
     let status = row.status;
@@ -257,6 +269,12 @@ export async function marketplace({ method, path, user, run, first, read }) {
         default:
           error(400, 'Choose a valid booking action.');
       }
+    }
+    if (status !== row.status && customerNoticeStatuses.has(status)) {
+      details.customerNotices = [
+        ...(details.customerNotices ?? []).slice(-49),
+        { status, version: row.version + 1, at: new Date().toISOString() },
+      ];
     }
     const result = await run(`UPDATE bookings SET details = ?, status = ?, contractor_id = ?, version = version + 1
       WHERE id = ? AND version = ?`, JSON.stringify(details), status, contractor, id, row.version);

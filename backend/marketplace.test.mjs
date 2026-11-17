@@ -53,7 +53,7 @@ test('a stale job acceptance fails when another worker changed the row', async (
   const request = {
     method: 'POST', path: '/api/bookings/10', user: contractor,
     read: async () => ({ action: 'accept' }),
-    first: async sql => sql.startsWith('SELECT * FROM bookings')
+    first: async sql => sql.startsWith('SELECT b.*, p.details')
       ? { status: 'searching', version: 2, customer_id: 'owner', details: offerDetails }
       : sql.includes('FROM contractor_reviews') ? { status: 'Approved' } : undefined,
     run: async (sql, details, status, contractor, id, version) => {
@@ -71,7 +71,7 @@ test('an available contractor cannot accept a job outside their city', async () 
   await assert.rejects(() => marketplace({
     method: 'POST', path: '/api/bookings/10', user: { ...contractor, area: 'Ottawa' },
     read: async () => ({ action: 'accept' }),
-    first: async sql => sql.startsWith('SELECT * FROM bookings')
+    first: async sql => sql.startsWith('SELECT b.*, p.details')
       ? { status: 'searching', version: 0, customer_id: 'owner', details: offerDetails }
       : undefined,
     run: async () => assert.fail('ineligible offer was updated'),
@@ -83,7 +83,7 @@ test('releasing an accepted job reopens it and removes prior chat from the next 
   const released = await marketplace({
     method: 'POST', path: '/api/bookings/10', user: contractor,
     read: async () => ({ action: 'release' }),
-    first: async sql => sql.startsWith('SELECT * FROM bookings')
+    first: async sql => sql.startsWith('SELECT b.*, p.details')
       ? { status: 'accepted', version: 1, customer_id: 'owner', contractor_id: contractor.id, details }
       : undefined,
     run: async (_, saved, status, assignee) => {
@@ -96,4 +96,43 @@ test('releasing an accepted job reopens it and removes prior chat from the next 
   });
   assert.equal(released.status, 'searching');
   assert.equal(released.releasedBy, undefined);
+});
+
+test('contractor milestones persist customer notices with the booking update', async () => {
+  for (const [before, after] of [['accepted', 'enRoute'], ['working', 'submitted']]) {
+    const result = await marketplace({
+      method: 'POST', path: '/api/bookings/10', user: contractor,
+      read: async () => ({ action: 'advance', status: after }),
+      first: async sql => sql.startsWith('SELECT b.*, p.details')
+        ? { status: before, version: 4, customer_id: 'owner', contractor_id: contractor.id,
+          details: { ...offerDetails, after: 'photo', customerNotices: [{ status: 'accepted', version: 2 }] } }
+        : undefined,
+      run: async (_, details, status, assignee, id, expectedVersion) => {
+        assert.equal(status, after);
+        assert.equal(expectedVersion, 4);
+        const notices = JSON.parse(details).customerNotices;
+        assert.equal(notices.length, 2);
+        assert.equal(notices[1].status, after);
+        assert.equal(notices[1].version, 5);
+        assert.ok(Number.isFinite(Date.parse(notices[1].at)));
+        return { affectedRows: 1 };
+      },
+    });
+    assert.equal(result.customerNotices.at(-1).status, after);
+  }
+});
+
+
+test('a property address corrected after booking is used to match an open job', async () => {
+  const row = {
+    id: 10, status: 'searching', version: 0, contractor_id: null,
+    details: { ...offerDetails, property: { ...offerDetails.property, address: 'Gulberg 2' } },
+    current_property: { ...offerDetails.property, address: '123 Maple Street, Toronto, ON' },
+  };
+  const offers = await marketplace({
+    method: 'GET', path: '/api/bookings', user: contractor,
+    run: async () => [row],
+  });
+  assert.equal(offers[0].id, row.id);
+  assert.equal(offers[0].property.address.trim(), 'toronto');
 });
