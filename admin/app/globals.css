@@ -45,3 +45,77 @@ input, select { max-width: 100%; border: 1px solid var(--input-border); border-r
 .record-actions button:disabled { opacity: .55; cursor: not-allowed; }
 :is(button, a, input, select):focus-visible { outline: 2px solid var(--action); outline-offset: 3px; }
 nav a:focus-visible { outline-color: #f5c8c1; }
+
+.admin-login {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  max-width: none;
+  padding: clamp(16px, 5vw, 48px);
+  color: white;
+  background-color: #17181a;
+  background-image:
+    radial-gradient(circle at 77% 12%, #e8412c38, transparent 47%),
+    radial-gradient(circle at 14% 92%, #8e1f124d, transparent 46%),
+    radial-gradient(#ffffff12 1px, transparent 1px);
+  background-size: auto, auto, 20px 20px;
+}
+
+.admin-login__card {
+  width: min(100%, 440px);
+  padding: clamp(20px, 6vw, 40px);
+  border: 1px solid #ffffff24;
+  border-radius: 28px;
+  background: #1f2023;
+  box-shadow: 0 20px 60px #0004;
+}
+
+.admin-login__mark {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  margin-bottom: 24px;
+  color: #ffc2b8;
+  background: #e8412c1f;
+  border: 1px solid #e8412c55;
+  border-radius: 16px;
+}
+
+.admin-login h1 { font-size: clamp(28px, 6vw, 36px); letter-spacing: -.035em; }
+.admin-login__intro { margin-top: 8px; color: #ffffffa8; line-height: 1.5; }
+.admin-login__form { display: grid; gap: 18px; margin-top: 26px; }
+.admin-login__form label { display: grid; gap: 8px; min-width: 0; font-size: 14px; font-weight: 600; }
+.admin-login__form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 50px;
+  padding: 12px 14px;
+  color: white;
+  background: #ffffff0d;
+  border: 1px solid #ffffff30;
+  border-radius: 14px;
+  font-size: 16px;
+}
+.admin-login__form button {
+  min-height: 52px;
+  margin-top: 4px;
+  padding: 12px 18px;
+  text-align: center;
+  color: white;
+  background: var(--action);
+  border-radius: 999px;
+  font-weight: 700;
+}
+.admin-login__form button:hover { background: var(--action-hover); }
+.admin-login__form button span { margin-inline-start: 8px; }
+.admin-login :is(button, input):focus-visible { outline-color: #ff9385; }
+.admin-login__error {
+  margin-top: 18px;
+  padding: 12px 14px;
+  color: #ffc2c8;
+  background: #ff6b7a12;
+  border: 1px solid #ff6b7a45;
+  border-radius: 12px;
+  font-size: 14px;
+}

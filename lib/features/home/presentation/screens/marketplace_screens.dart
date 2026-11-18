@@ -608,6 +608,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                     context: context,
                     builder: (_) => AlertDialog(
                       title: const Text('Property location'),
+                      scrollable: true,
                       content: SizedBox(
                         width: 560,
                         child: PropertyMap(
@@ -615,6 +616,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                               ? LatLng(lat, lng)
                               : const LatLng(43.6532, -79.3832),
                           editable: true,
+                          locateOnOpen: !valid,
                         ),
                       ),
                     ),
@@ -1440,6 +1442,10 @@ class BookingDetailsScreen extends ConsumerWidget {
               CustomerTrackingMap(
                 key: ValueKey(booking.id),
                 bookingId: booking.id,
+                propertyPin: switch (booking.property.pin) {
+                  final pin? => LatLng(pin.latitude, pin.longitude),
+                  null => null,
+                },
               ),
             ],
           ),
