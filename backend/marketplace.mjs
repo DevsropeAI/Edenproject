@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { structuredAddress, propertyMeasurements } from './addresses.mjs';
 
 
 const transitions = {
@@ -42,8 +43,11 @@ const primaryServiceIds = new Map([
 ]);
 
 function matchesOffer(details, user) {
+  const sameCity = user.city_id != null && details.property?.cityId != null
+    ? Number(user.city_id) === Number(details.property.cityId)
+    : details.property?.address?.split(',')[1]?.trim().toLowerCase() === user.area?.trim().toLowerCase();
   const city = details.property?.address?.split(',')[1]?.trim().toLowerCase();
-  return Boolean(city && city === user.area?.trim().toLowerCase() &&
+  return Boolean(sameCity && (details.property?.cityId != null || city) &&
     details.service === primaryServiceIds.get(user.service) &&
     !details.releasedBy?.includes(user.id));
 }
@@ -51,7 +55,8 @@ function matchesOffer(details, user) {
 function offerDetails(row) {
   const details = parse(row.details);
   if (row.status !== 'searching' || row.current_property == null) return details;
-  return { ...details, property: { ...parse(row.current_property), id: details.property.id } };
+  return { ...details, property: { ...parse(row.current_property), id: details.property.id,
+    ...(Object.hasOwn(row, 'current_city_id') ? { cityId: row.current_city_id } : {}) } };
 }
 
 const currentPropertyJoin = `LEFT JOIN properties p ON p.owner = b.customer_id
@@ -91,18 +96,29 @@ async function bookingLocation(id, { method, user, run, first, read }) {
   error(403, 'Location sharing is unavailable.');
 }
 
-export async function marketplace({ method, path, user, run, first, read }) {
+export async function marketplace({ method, path, user, run, first, read, addressStore }) {
   if (path.startsWith('/api/properties')) {
     if (user.role !== 'customer') error(403, 'Switch to customer mode.');
     if (path === '/api/properties') {
       if (method === 'GET') {
-        const records = (await run('SELECT * FROM properties WHERE owner = ? ORDER BY id', user.id)).map(property);
+        const records = (await run('SELECT * FROM properties WHERE owner = ? ORDER BY id', user.id)).map(row => ({
+          ...property(row), ...(Object.hasOwn(row, 'city_id') ? { cityId: row.city_id } : {}),
+        }));
         const selected = records.find(record => record.id === user.default_property) ?? records[0];
         return records.map(record => ({ ...record, isDefault: record.id === selected?.id }));
       }
       if (method === 'POST') {
         const body = await read();
         const id = body.id;
+        if (id != null && (!Number.isInteger(id) || id <= 0)) error(400, 'Choose a valid property.');
+        const existing = id == null ? null : await first('SELECT * FROM properties WHERE id = ? AND owner = ?', id, user.id);
+        if (id != null && !existing) error(404, 'Property unavailable.');
+        const previous = existing ? parse(existing.details) : {};
+        if (body.structuredAddress != null && !addressStore) error(503, 'Structured addresses are awaiting the database update. Your existing address can still be saved.');
+        const address = structuredAddress(body, previous.structuredAddress);
+        const measurements = propertyMeasurements(body.measurements, previous.measurements);
+        if (!['House', 'Apartment', 'Commercial'].includes(body.type)) error(400, 'Choose a property type.');
+        let cityId = existing?.city_id ?? null;
         let pin = null;
         if (body.pin != null) {
           const { latitude, longitude } = body.pin;
@@ -111,15 +127,32 @@ export async function marketplace({ method, path, user, run, first, read }) {
           pin = { latitude, longitude };
         }
         const details = JSON.stringify({
-          name: text(body.name, 120, true), address: text(body.address, 250, true),
+          ...previous,
+          name: text(body.name, 120, true),
+          address: body.structuredAddress != null
+            ? [address.street, address.city, address.state, address.postalCode, address.country].filter(Boolean).join(', ')
+            : text(body.address, 250, true),
           size: text(body.size, 50, true), notes: text(body.notes, 1000),
           type: text(body.type, 50, true), photo: image(body.photo), pin,
+          ...(address ? { structuredAddress: address } : {}),
+          ...(measurements ? { measurements } : {}),
+        });
+        // Validate the complete property before creating a selected city record.
+        if (body.structuredAddress != null) cityId = await addressStore.city({
+          ...address,
+          ...(body.addressSelection?.city === address.city && body.addressSelection?.country === address.country
+            ? { latitude: body.addressSelection.latitude, longitude: body.addressSelection.longitude } : {}),
         });
         if (id == null) {
-          const result = await run('INSERT INTO properties (owner, details) VALUES (?, ?)', user.id, details);
+          const result = addressStore
+            ? await run('INSERT INTO properties (owner, details, city_id) VALUES (?, ?, ?)', user.id, details, cityId)
+            : await run('INSERT INTO properties (owner, details) VALUES (?, ?)', user.id, details);
           return { id: result.insertId };
         }
-        if (!Number.isInteger(id) || !(await run('UPDATE properties SET details = ? WHERE id = ? AND owner = ?', details, id, user.id)).affectedRows) {
+        const updated = addressStore
+          ? await run('UPDATE properties SET details = ?, city_id = ? WHERE id = ? AND owner = ?', details, cityId, id, user.id)
+          : await run('UPDATE properties SET details = ? WHERE id = ? AND owner = ?', details, id, user.id);
+        if (!Number.isInteger(id) || !updated.affectedRows) {
           error(404, 'Property unavailable.');
         }
         return { id };
@@ -145,7 +178,7 @@ export async function marketplace({ method, path, user, run, first, read }) {
       if (user.role === 'customer') {
         return (await run('SELECT * FROM bookings WHERE customer_id = ? ORDER BY id DESC', user.id)).map(booking);
       }
-      const records = await run(`SELECT b.*, p.details AS current_property FROM bookings b
+      const records = await run(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''} FROM bookings b
         ${currentPropertyJoin} WHERE b.contractor_id = ? OR
         (b.status = 'searching' AND b.customer_id <> ? AND NOT EXISTS (SELECT 1 FROM preferences p WHERE p.user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(p.details, '$.available')) = 'false') AND NOT EXISTS (
           SELECT 1 FROM declined_jobs d WHERE d.booking_id = b.id AND d.contractor_id = ?))
@@ -177,7 +210,7 @@ export async function marketplace({ method, path, user, run, first, read }) {
         (body.walkway === true && body.service === 'snow' ? 1200 : 0);
       const total = Math.round(base * (body.discount === true ? 0.9 : 1) * 1.13) / 100;
       const details = {
-        property: property(selected), service: body.service, date: new Date(date).toISOString(), total,
+        property: { ...property(selected), ...(addressStore ? { cityId: selected.city_id } : {}) }, service: body.service, date: new Date(date).toISOString(), total,
         notes: text(body.notes, 2000), recurring: body.recurring === true,
         referencePhoto: image(body.referencePhoto), review: '', messages: [],
       };
@@ -191,7 +224,7 @@ export async function marketplace({ method, path, user, run, first, read }) {
   if (method === 'POST' && match) {
     const id = Number(match[1]);
     const body = await read();
-    const row = await first(`SELECT b.*, p.details AS current_property FROM bookings b
+    const row = await first(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''} FROM bookings b
       ${currentPropertyJoin} WHERE b.id = ?`, id);
     if (!row) error(404, 'Booking unavailable.');
     const customer = user.role === 'customer' && row.customer_id === user.id;
@@ -224,6 +257,7 @@ export async function marketplace({ method, path, user, run, first, read }) {
           contractor = null;
           details.releasedBy = [...(details.releasedBy ?? []), user.id];
           details.messages = [];
+          details.chatRead = {};
           break;
         case 'advance':
           if (assigned && typeof body.status === 'string' && transitions[status] === body.status &&
@@ -264,6 +298,16 @@ export async function marketplace({ method, path, user, run, first, read }) {
             error(409, 'This conversation has reached its storage limit.');
           }
           details.messages.push(message);
+          break;
+        }
+        case 'read': {
+          const count = body.count;
+          if (!row.contractor_id || !Number.isInteger(count) || count < 0 ||
+              count > details.messages.length) error(400, 'Invalid conversation position.');
+          const role = customer ? 'customer' : 'contractor';
+          const previous = details.chatRead?.[role] ?? 0;
+          if (count <= previous) return booking(row);
+          details.chatRead = { ...details.chatRead, [role]: count };
           break;
         }
         default:

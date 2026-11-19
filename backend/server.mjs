@@ -1,4 +1,6 @@
 import { image, marketplace } from './marketplace.mjs';
+import { createGeocoding } from './geocoding.mjs';
+import { createAddressStore } from './addresses.mjs';
 import { createServer } from 'node:http';
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
@@ -67,18 +69,21 @@ export function createApi({
   sendPasswordReset,
   phoneVerification,
   payments,
+  structuredAddresses = false,
+  geocoding = createGeocoding(),
 } = {}) {
   const run = async (sql, ...args) => (await db.execute(sql, args))[0];
   const first = async (sql, ...args) => (await run(sql, ...args))[0];
+  const addressStore = structuredAddresses ? createAddressStore(run, first) : null;
   const userById = id => first('SELECT * FROM users WHERE id = ?', id);
-  const publicUser = ({ id, email, name, phone, role, customer, contractor, area, service }) => ({
-    id, email, name, phone, role, area, service,
+  const publicUser = ({ id, email, name, phone, role, customer, contractor, area, service, city_id }) => ({
+    id, email, name, phone, role, area, service, cityId: city_id ?? null,
     roles: [...(customer ? ['customer'] : []), ...(contractor ? ['contractor'] : [])],
   });
   const attempts = new Map();
 
-  function limitAuth(req) {
-    const ip = req.socket.remoteAddress;
+  function limitAuth(req, scope = 'auth') {
+    const ip = scope + ':' + req.socket.remoteAddress;
     const now = Date.now();
     for (const [address, attempt] of attempts) {
       if (attempt.until <= now) attempts.delete(address);
@@ -136,6 +141,19 @@ export function createApi({
     if (method === 'GET' && path === '/api/auth/options') {
       return { phoneVerification: Boolean(phoneVerification) };
     }
+    if (method === 'GET' && path === '/api/auth/work-city-options') {
+      limitAuth(req, 'city');
+      return geocoding.capabilities;
+    }
+    if (method === 'GET' && ['/api/auth/work-city-search', '/api/auth/work-city-autocomplete'].includes(path)) {
+      limitAuth(req, 'city');
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      params.set('type', 'city');
+      return geocoding.lookup(
+        path.endsWith('autocomplete') ? 'autocomplete' : 'search',
+        params, 'registration:' + digest(req.socket.remoteAddress ?? 'unknown'),
+      );
+    }
     if (method === 'POST' && path === '/api/auth/phone-verification') {
       limitAuth(req);
       if (!phoneVerification) fail(503, 'SMS verification is unavailable.');
@@ -154,6 +172,8 @@ export function createApi({
       const phone = field(body, 'phone', 35);
       if (phone.replace(/\D/g, '').length < 7) fail(400, 'Enter a valid phone number.');
       const { area, service } = role === 'contractor' ? contractorDetails(body) : { area: '', service: '' };
+      if (body.workCity != null && role !== 'contractor') fail(400, 'Work city is for contractor accounts.');
+      if (body.workCity != null && !addressStore) fail(503, 'City selection is awaiting the database update. Enter the service area manually.');
       if (phoneVerification) {
         const code = field(body, 'phoneCode', 10);
         if (!/^\+[1-9]\d{7,14}$/.test(phone) || !/^\d{4,10}$/.test(code) || !await phoneVerification.check(phone, code)) {
@@ -161,7 +181,26 @@ export function createApi({
         }
       }
       try {
-        await run(`
+        if (body.workCity != null) {
+          const connection = await db.getConnection();
+          try {
+            await connection.beginTransaction();
+            const transactionRun = async (sql, ...args) => (await connection.execute(sql, args))[0];
+            const transactionFirst = async (sql, ...args) => (await transactionRun(sql, ...args))[0];
+            const cityId = await createAddressStore(transactionRun, transactionFirst).city(body.workCity);
+            await transactionRun(`
+              INSERT INTO users (id, email, password, name, phone, role, customer, contractor, area, service, city_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, token(), email, hashPassword(password), name, phone, role,
+            Number(role === 'customer'), Number(role === 'contractor'), area, service, cityId);
+            await connection.commit();
+          } catch (error) {
+            await connection.rollback();
+            throw error;
+          } finally {
+            connection.release();
+          }
+        } else await run(`
           INSERT INTO users (id, email, password, name, phone, role, customer, contractor, area, service)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, token(), email, hashPassword(password), name, phone, role, Number(role === 'customer'), Number(role === 'contractor'), area, service);
@@ -280,6 +319,32 @@ export function createApi({
       WHERE sessions.token = ? AND sessions.expires > ? AND users.blocked = 0
     `, session, Date.now());
     if (!user) fail(401, 'Sign in to continue.');
+    if (path.startsWith('/api/geo/')) {
+      if (!roles.has(user.role)) fail(403, 'Choose a customer or contractor account.');
+      if (method !== 'GET') fail(405, 'Use a GET request.');
+      if (path === '/api/geo/capabilities') return {
+        ...geocoding.capabilities, structuredAddresses,
+      };
+      const kind = path.slice('/api/geo/'.length);
+      if (!['search', 'autocomplete', 'reverse'].includes(kind)) fail(404, 'Endpoint not found.');
+      return geocoding.lookup(kind, new URL(req.url, 'http://localhost').searchParams, user.id);
+    }
+    if (method === 'GET' && path === '/api/contractor/work-location') {
+      if (user.role !== 'contractor') fail(403, 'Switch to contractor mode.');
+      const city = addressStore && user.city_id
+        ? await first('SELECT id, name, state, country, latitude, longitude FROM cities WHERE id = ?', user.city_id)
+        : null;
+      return { area: user.area, city };
+    }
+    if (method === 'POST' && path === '/api/contractor/work-location') {
+      if (user.role !== 'contractor') fail(403, 'Switch to contractor mode.');
+      if (!addressStore) fail(503, 'Structured work locations are awaiting the database update. Your existing service area still works.');
+      const body = await readJson(req);
+      if (body.city == null) fail(400, 'Select a city.');
+      const cityId = await addressStore.city(body.city);
+      await run('UPDATE users SET city_id = ? WHERE id = ?', cityId, user.id);
+      return { saved: true, cityId };
+    }
     if (path === '/api/payments' && method === 'GET') {
       return { enabled: Boolean(payments), records: payments ? await payments.list(user, run) : [] };
     }
@@ -396,7 +461,7 @@ export function createApi({
         return { saved: true };
       }
     }
-    const result = await marketplace({ method, path, user, run, first, read: () => readJson(req, 3_000_000) });
+    const result = await marketplace({ method, path, user, run, first, addressStore, read: () => readJson(req, 3_000_000) });
     if (result !== undefined) return result;
     fail(404, 'Endpoint not found.');
   }

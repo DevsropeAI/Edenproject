@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import Stripe from 'stripe';
 import { createPayments } from './payments.mjs';
 import { createPhoneVerification } from './phone-verification.mjs';
+import { addressesReady, runAddressMigration } from './migrations/runner.mjs';
 
 const databaseUrl = await configureDatabase();
 const { EDEN_SMTP_URL, EDEN_EMAIL_FROM } = process.env;
@@ -21,8 +22,12 @@ const payments = STRIPE_SECRET_KEY ? createPayments(new Stripe(STRIPE_SECRET_KEY
 
 const port = Number(process.env.PORT ?? 3001);
 const db = await openDatabase(databaseUrl);
+// Enable only after reviewing and approving the migration for this database.
+if (process.env.EDEN_APPLY_ADDRESS_MIGRATION === 'true') await runAddressMigration(db);
+const structuredAddresses = await addressesReady(db);
 const server = createApi({
   db,
+  structuredAddresses,
   payments,
   origins: (process.env.EDEN_ORIGINS ?? '').split(',').map(origin => origin.trim()),
   adminKey: process.env.EDEN_ADMIN_KEY,

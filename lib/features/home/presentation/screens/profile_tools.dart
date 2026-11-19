@@ -1,3 +1,5 @@
+import 'work_location_editor.dart';
+
 import 'dart:typed_data';
 import 'dart:convert';
 
@@ -163,6 +165,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                       : null;
                 },
               ),
+              if (user.role == 'contractor') const WorkLocationEditor(),
               FilledButton(
                 onPressed: _deleting || _saving
                     ? null
@@ -332,7 +335,6 @@ class VerificationScreen extends ConsumerWidget {
     );
   }
 }
-
 
 // import 'dart:typed_data';
 // import 'dart:convert';

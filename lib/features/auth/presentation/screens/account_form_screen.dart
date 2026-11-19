@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/network/api_client.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../../home/presentation/screens/marketplace_screens.dart';
+import '../../../home/presentation/screens/address_search_field.dart';
 import '../../domain/auth_state.dart';
 import '../../providers/auth_provider.dart';
 
@@ -45,6 +46,7 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
   bool _busy = false;
   String? _feedback;
   String _service = 'Snow removal';
+  Map<String, dynamic>? _workCity;
 
   bool get _login => widget.mode == AuthMode.login;
   bool get _reset => widget.mode == AuthMode.reset;
@@ -92,8 +94,9 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
         'phone': _phone.text.trim(),
         'phoneCode': _phoneCode.text.trim(),
         'role': _contractor ? 'contractor' : 'customer',
-        'area': _area.text.trim(),
+        'area': _workCity?['city'] as String? ?? _area.text.trim(),
         'service': _contractor ? _service : '',
+        if (_contractor && _workCity != null) 'workCity': _workCity,
       });
     }
     if (!mounted) return;
@@ -495,10 +498,24 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                       if (_reset && _codeRequested)
                         _field(_resetCode, 'Reset code', Icons.key_outlined),
                       if (_contractor) ...[
-                        _field(
-                          _area,
-                          'Service area',
-                          Icons.location_on_outlined,
+                        AddressSearchField(
+                          controller: _area,
+                          label: 'Service city',
+                          required: true,
+                          enabled: !_busy,
+                          citiesOnly: true,
+                          registration: true,
+                          onEdited: () => _workCity = null,
+                          onSelected: (city) {
+                            setState(() {
+                              _workCity = city;
+                              _area.text =
+                                  [city['city'], city['state'], city['country']]
+                                      .whereType<String>()
+                                      .where((value) => value.isNotEmpty)
+                                      .join(', ');
+                            });
+                          },
                         ),
                         DropdownButtonFormField<String>(
                           initialValue: _service,

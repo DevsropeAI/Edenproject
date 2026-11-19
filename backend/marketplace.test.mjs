@@ -136,3 +136,41 @@ test('a property address corrected after booking is used to match an open job', 
   assert.equal(offers[0].id, row.id);
   assert.equal(offers[0].property.address.trim(), 'toronto');
 });
+
+test('chat read positions are persisted per role without marking later messages read', async () => {
+  for (const role of ['customer', 'contractor']) {
+    const details = {
+      ...offerDetails,
+      messages: [{ contractor: true, text: 'Hello' }, { contractor: false, text: 'Thanks' }],
+      chatRead: { customer: 0, contractor: 0 },
+    };
+    const result = await marketplace({
+      method: 'POST', path: '/api/bookings/10',
+      user: role === 'customer' ? { id: 'owner', role } : contractor,
+      read: async () => ({ action: 'read', count: 1 }),
+      first: async sql => sql.startsWith('SELECT b.*, p.details')
+        ? { id: 10, status: 'accepted', version: 3, customer_id: 'owner', contractor_id: contractor.id, details }
+        : undefined,
+      run: async (_, json) => {
+        const saved = JSON.parse(json);
+        assert.equal(saved.chatRead[role], 1);
+        assert.equal(saved.chatRead[role === 'customer' ? 'contractor' : 'customer'], 0);
+        assert.equal(saved.messages.length, 2);
+        return { affectedRows: 1 };
+      },
+    });
+    assert.equal(result.chatRead[role], 1);
+  }
+});
+
+test('chat cannot be marked read beyond the messages delivered to a participant', async () => {
+  await assert.rejects(() => marketplace({
+    method: 'POST', path: '/api/bookings/10', user: contractor,
+    read: async () => ({ action: 'read', count: 99 }),
+    first: async sql => sql.startsWith('SELECT b.*, p.details')
+      ? { id: 10, status: 'accepted', version: 0, customer_id: 'owner', contractor_id: contractor.id,
+          details: { ...offerDetails, messages: [] } }
+      : undefined,
+    run: async () => assert.fail('Invalid read position was saved'),
+  }), error => error.status === 400);
+});

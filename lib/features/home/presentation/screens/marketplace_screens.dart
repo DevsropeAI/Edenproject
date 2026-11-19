@@ -1,3 +1,5 @@
+import '../../../../core/network/api_client.dart';
+import 'address_search_field.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_dark_theme.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -6,6 +8,8 @@ import '../../../../core/widgets/app_background.dart';
 import '../../../../core/widgets/glass_controls.dart';
 
 import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
 
@@ -393,6 +397,30 @@ class MarketCard extends StatelessWidget {
   );
 }
 
+class PropertyMeasurements extends StatelessWidget {
+  const PropertyMeasurements(this.property, {super.key});
+  final Property property;
+
+  @override
+  Widget build(BuildContext context) {
+    final values = property.measurements;
+    if (values.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Driveway: ${values['driveway']}'),
+        Text(
+          'Front yard: ${values['frontYard'] == true ? values['frontYardSize'] : 'No'}',
+        ),
+        Text(
+          'Backyard: ${values['backyard'] == true ? values['backyardSize'] : 'No'}',
+        ),
+        Text('Walkway: ${values['walkway']}'),
+      ],
+    );
+  }
+}
+
 class PropertiesScreen extends ConsumerWidget {
   const PropertiesScreen({super.key, this.service});
   final Service? service;
@@ -428,7 +456,8 @@ class PropertiesScreen extends ConsumerWidget {
           MarketCard(
             children: [
               MarketHeading(property.name),
-              Text(property.address),
+              Text(property.fullAddress),
+              PropertyMeasurements(property),
               Text(
                 '${property.type} · ${property.size}${property.isDefault ? ' · Default' : ''}',
               ),
@@ -508,6 +537,188 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
   late final _name = TextEditingController(text: widget.property?.name);
   late final _address = TextEditingController(text: widget.property?.address);
   late final _notes = TextEditingController(text: widget.property?.notes);
+  late final _street = TextEditingController(
+    text: widget.property?.structuredAddress['street'] as String?,
+  );
+  late final _city = TextEditingController(
+    text: widget.property?.structuredAddress['city'] as String?,
+  );
+  late final _state = TextEditingController(
+    text: widget.property?.structuredAddress['state'] as String?,
+  );
+  late final _postal = TextEditingController(
+    text: widget.property?.structuredAddress['postalCode'] as String?,
+  );
+  late final _country = TextEditingController(
+    text: widget.property?.structuredAddress['country'] as String?,
+  );
+  late bool _structured =
+      widget.property == null || widget.property!.structuredAddress.isNotEmpty;
+  late String _driveway =
+      widget.property?.measurements['driveway'] as String? ?? 'medium';
+  late String _walkway =
+      widget.property?.measurements['walkway'] as String? ?? 'none';
+  late bool _frontYard = widget.property?.measurements['frontYard'] == true;
+  late bool _backyard = widget.property?.measurements['backyard'] == true;
+  late final _frontSize = TextEditingController(
+    text: widget.property?.measurements['frontYardSize'] as String?,
+  );
+  late final _backSize = TextEditingController(
+    text: widget.property?.measurements['backyardSize'] as String?,
+  );
+  bool _lookingUp = false;
+  int _lookupVersion = 0;
+  String? _lookupMessage;
+  Map<String, dynamic>? _selection;
+
+  void _fillAddress(
+    Map<String, dynamic> result, {
+    bool movePin = true,
+    bool replaceCity = false,
+  }) {
+    setState(() {
+      _lookupVersion++;
+      _lookingUp = false;
+      _structured = true;
+      final keepCity = !replaceCity && _city.text.trim().isNotEmpty;
+      final suggestedCity = result['city'] as String? ?? '';
+      final differentCity =
+          keepCity &&
+          suggestedCity.isNotEmpty &&
+          suggestedCity.toLowerCase() != _city.text.trim().toLowerCase();
+      for (final (controller, key) in [
+        (_street, 'street'),
+        (_city, 'city'),
+        (_state, 'state'),
+        (_postal, 'postalCode'),
+        (_country, 'country'),
+      ]) {
+        if (keepCity && key == 'city') continue;
+        if (differentCity &&
+            (key == 'state' || key == 'country') &&
+            controller.text.trim().isNotEmpty)
+          continue;
+        final value = result[key] as String? ?? '';
+        if (value.isNotEmpty) controller.text = value;
+      }
+      if (differentCity) {
+        _lookupMessage =
+            'The lookup suggests $suggestedCity. Your selected city, ${_city.text.trim()}, was kept. Edit City to change the service area.';
+      }
+      _selection = result;
+      _address.text = [
+        _street.text,
+        _city.text,
+        _state.text,
+        _postal.text,
+        _country.text,
+      ].where((value) => value.trim().isNotEmpty).join(', ');
+      if (movePin && result['latitude'] is num && result['longitude'] is num) {
+        _latitude.text = (result['latitude'] as num).toStringAsFixed(6);
+        _longitude.text = (result['longitude'] as num).toStringAsFixed(6);
+      }
+    });
+  }
+
+  Future<void> _reverse(double latitude, double longitude) async {
+    final version = ++_lookupVersion;
+    setState(() {
+      _lookingUp = true;
+      _lookupMessage = null;
+    });
+    try {
+      final response = await ref
+          .read(apiClientProvider)
+          .get(
+            '/geo/reverse',
+            queryParameters: {'lat': latitude, 'lng': longitude},
+          );
+      if (!mounted || version != _lookupVersion) return;
+      if (response.data is Map) {
+        _fillAddress(
+          Map<String, dynamic>.from(response.data as Map),
+          movePin: false,
+        );
+      } else {
+        setState(
+          () => _lookupMessage =
+              'No address found for this pin. Enter it manually.',
+        );
+      }
+    } catch (_) {
+      if (mounted && version == _lookupVersion) {
+        setState(
+          () => _lookupMessage = 'Could not look up the address. Your pin is kept; enter the address manually.',
+        );
+      }
+    } finally {
+      if (mounted && version == _lookupVersion)
+        setState(() => _lookingUp = false);
+    }
+  }
+
+  void _editedAddress() {
+    setState(() {
+      _lookupVersion++;
+      _lookingUp = false;
+      _selection = null;
+    });
+  }
+
+  Future<void> _updatePin() async {
+    final query = [
+      _street.text,
+      _city.text,
+      _state.text,
+      _postal.text,
+      _country.text,
+    ].where((value) => value.trim().isNotEmpty).join(', ');
+    if (query.trim().length < 3) return;
+    final version = ++_lookupVersion;
+    setState(() {
+      _lookingUp = true;
+      _lookupMessage = null;
+    });
+    try {
+      final response = await ref
+          .read(apiClientProvider)
+          .get('/geo/search', queryParameters: {'q': query});
+      if (!mounted || version != _lookupVersion) return;
+      final results = (response.data as List).cast<Map>();
+      if (results.isEmpty) {
+        setState(
+          () => _lookupMessage =
+              'No matching location. Keep your pin or adjust it on the map.',
+        );
+        return;
+      }
+      final result = await showCustomerDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (dialog) => SimpleDialog(
+          title: const Text('Choose address location'),
+          children: [
+            for (final result in results)
+              SimpleDialogOption(
+                onPressed: () =>
+                    Navigator.pop(dialog, Map<String, dynamic>.from(result)),
+                child: Text(result['label'] as String? ?? ''),
+              ),
+          ],
+        ),
+      );
+      if (mounted && version == _lookupVersion && result != null)
+        _fillAddress(result);
+    } catch (_) {
+      if (mounted)
+        setState(
+          () => _lookupMessage =
+              'Address search is unavailable. Adjust the pin manually.',
+        );
+    } finally {
+      if (mounted) setState(() => _lookingUp = false);
+    }
+  }
+
   late String _type = widget.property?.type ?? 'House';
   late Uint8List? _photo = widget.property?.photo;
   late final _latitude = TextEditingController(
@@ -540,6 +751,17 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
     _latitude.dispose();
     _longitude.dispose();
     _notes.dispose();
+    for (final controller in [
+      _street,
+      _city,
+      _state,
+      _postal,
+      _country,
+      _frontSize,
+      _backSize,
+    ]) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -553,13 +775,78 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            spacing: EdenSpacing.screen,
             children: [
               _field(_name, 'Property name', required: true),
-              _field(
-                _address,
-                'Street address, city, postal code',
-                required: true,
-              ),
+              if (!_structured ||
+                  ref
+                          .watch(geoCapabilitiesProvider)
+                          .value?['structuredAddresses'] !=
+                      true) ...[
+                _field(
+                  _address,
+                  'Street address, city, postal code',
+                  required: true,
+                ),
+                TextButton(
+                  onPressed:
+                      ref
+                              .watch(geoCapabilitiesProvider)
+                              .value?['structuredAddresses'] ==
+                          true
+                      ? () => setState(() => _structured = true)
+                      : null,
+                  child: const Text('Add structured address'),
+                ),
+              ] else ...[
+                AddressSearchField(
+                  controller: _street,
+                  label: 'Street address',
+                  required: true,
+                  onEdited: _editedAddress,
+                  onSelected: _fillAddress,
+                ),
+                AddressSearchField(
+                  controller: _city,
+                  label: 'City',
+                  required: true,
+                  citiesOnly: true,
+                  onEdited: _editedAddress,
+                  onSelected: (result) =>
+                      _fillAddress(result, replaceCity: true),
+                ),
+                TextFormField(
+                  controller: _state,
+                  maxLength: 150,
+                  onChanged: (_) => _editedAddress(),
+                  decoration: const InputDecoration(
+                    labelText: 'Province / state',
+                  ),
+                ),
+                TextFormField(
+                  controller: _postal,
+                  maxLength: 30,
+                  onChanged: (_) => _editedAddress(),
+                  decoration: const InputDecoration(
+                    labelText: 'Postal code (optional)',
+                  ),
+                ),
+                TextFormField(
+                  controller: _country,
+                  maxLength: 100,
+                  onChanged: (_) => _editedAddress(),
+                  validator: (value) =>
+                      (value ?? '').trim().isEmpty ? 'Enter country' : null,
+                  decoration: const InputDecoration(labelText: 'Country'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _lookingUp ? null : _updatePin,
+                  icon: const Icon(Icons.location_searching),
+                  label: const Text('Update pin from address'),
+                ),
+              ],
+              if (_lookingUp) const LinearProgressIndicator(),
+              if (_lookupMessage != null) Text(_lookupMessage!),
               DropdownButtonFormField<String>(
                 initialValue: _size,
                 decoration: const InputDecoration(labelText: 'Property size'),
@@ -577,6 +864,36 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                     DropdownMenuItem(value: type, child: Text(type)),
                 ],
                 onChanged: (value) => setState(() => _type = value!),
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: _driveway,
+                decoration: const InputDecoration(labelText: 'Driveway size'),
+                items: [
+                  for (final value in ['small', 'medium', 'large'])
+                    DropdownMenuItem(value: value, child: Text(value)),
+                ],
+                onChanged: (value) => setState(() => _driveway = value!),
+              ),
+              SwitchListTile(
+                title: const Text('Front yard'),
+                value: _frontYard,
+                onChanged: (value) => setState(() => _frontYard = value),
+              ),
+              if (_frontYard) _field(_frontSize, 'Front yard size'),
+              SwitchListTile(
+                title: const Text('Backyard'),
+                value: _backyard,
+                onChanged: (value) => setState(() => _backyard = value),
+              ),
+              if (_backyard) _field(_backSize, 'Backyard size'),
+              DropdownButtonFormField<String>(
+                initialValue: _walkway,
+                decoration: const InputDecoration(labelText: 'Walkway'),
+                items: [
+                  for (final value in ['none', 'short', 'long'])
+                    DropdownMenuItem(value: value, child: Text(value)),
+                ],
+                onChanged: (value) => setState(() => _walkway = value!),
               ),
               _field(_notes, 'Access instructions'),
               TextFormField(
@@ -624,6 +941,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                   if (!mounted || pin == null) return;
                   _latitude.text = pin.latitude.toStringAsFixed(6);
                   _longitude.text = pin.longitude.toStringAsFixed(6);
+                  await _reverse(pin.latitude, pin.longitude);
                 },
               ),
               if (_photo case final photo?) DemoImage(photo),
@@ -646,27 +964,52 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
         child: const Text('Cancel'),
       ),
       FilledButton(
-        onPressed: () async {
-          if (!_form.currentState!.validate()) return;
-          final saved = await ref
-              .read(propertiesProvider.notifier)
-              .save(
-                widget.property?.id,
-                _name.text.trim(),
-                _address.text.trim(),
-                _size,
-                _notes.text.trim(),
-                type: _type,
-                photo: _photo,
-                pin: _latitude.text.trim().isEmpty
-                    ? null
-                    : (
-                        latitude: double.parse(_latitude.text.trim()),
-                        longitude: double.parse(_longitude.text.trim()),
-                      ),
-              );
-          if (saved && context.mounted) Navigator.pop(context);
-        },
+        onPressed: _lookingUp
+            ? null
+            : () async {
+                if (!_form.currentState!.validate()) return;
+                final saved = await ref
+                    .read(propertiesProvider.notifier)
+                    .save(
+                      widget.property?.id,
+                      _name.text.trim(),
+                      _address.text.trim(),
+                      _size,
+                      _notes.text.trim(),
+                      structuredAddress:
+                          _structured &&
+                              ref
+                                      .read(geoCapabilitiesProvider)
+                                      .value?['structuredAddresses'] ==
+                                  true
+                          ? {
+                              'street': _street.text.trim(),
+                              'city': _city.text.trim(),
+                              'state': _state.text.trim(),
+                              'postalCode': _postal.text.trim(),
+                              'country': _country.text.trim(),
+                            }
+                          : null,
+                      addressSelection: _selection,
+                      measurements: {
+                        'driveway': _driveway,
+                        'walkway': _walkway,
+                        'frontYard': _frontYard,
+                        'frontYardSize': _frontSize.text.trim(),
+                        'backyard': _backyard,
+                        'backyardSize': _backSize.text.trim(),
+                      },
+                      type: _type,
+                      photo: _photo,
+                      pin: _latitude.text.trim().isEmpty
+                          ? null
+                          : (
+                              latitude: double.parse(_latitude.text.trim()),
+                              longitude: double.parse(_longitude.text.trim()),
+                            ),
+                    );
+                if (saved && context.mounted) Navigator.pop(context);
+              },
         child: const Text('Save property'),
       ),
     ],
@@ -710,6 +1053,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   @override
   void dispose() {
     _notes.dispose();
+
     _coupon.dispose();
     super.dispose();
   }
@@ -795,7 +1139,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       children: [
         MarketBanner(
           property.name,
-          property.address,
+          property.fullAddress,
           Icons.event_available_outlined,
         ),
         MarketCard(
@@ -894,7 +1238,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(service.label),
-                              Text(property.address),
+                              Text(property.name),
+                              Text(property.fullAddress),
+                              PropertyMeasurements(property),
                               Text(_date.format(_scheduled!)),
                               const Divider(),
                               Text('Total: ${_money.format(total)} CAD'),
@@ -1058,7 +1404,7 @@ class BookingListScreen extends ConsumerWidget {
                 MarketCard(
                   children: [
                     MarketHeading(booking.service.label, compact: true),
-                    Text(booking.property.address),
+                    Text(booking.property.fullAddress),
                     Text(
                       '${_date.format(booking.date)} · ${_money.format(booking.total)} CAD',
                     ),
@@ -1267,7 +1613,7 @@ class _JobCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: EdenSpacing.gap),
-            _JobLine(Icons.location_on_outlined, booking.property.address),
+            _JobLine(Icons.location_on_outlined, booking.property.fullAddress),
             const SizedBox(height: EdenSpacing.sm),
             _JobLine(Icons.schedule, _date.format(booking.date)),
             const SizedBox(height: EdenSpacing.gap),
@@ -1393,7 +1739,7 @@ class BookingDetailsScreen extends ConsumerWidget {
       children: [
         MarketBanner(
           booking.service.label,
-          booking.property.address,
+          booking.property.fullAddress,
           Icons.assignment_outlined,
         ),
         MarketCard(
@@ -1423,6 +1769,7 @@ class BookingDetailsScreen extends ConsumerWidget {
                   ),
                 ),
               ),
+            PropertyMeasurements(booking.property),
             if (booking.property.notes.isNotEmpty) Text(booking.property.notes),
             if (booking.notes.isNotEmpty) Text(booking.notes),
             if (booking.status != JobStatus.searching &&
@@ -1430,7 +1777,11 @@ class BookingDetailsScreen extends ConsumerWidget {
               OutlinedButton.icon(
                 onPressed: () =>
                     context.push('/chat/${booking.id}', extra: contractor),
-                icon: const Icon(Icons.chat_bubble_outline),
+                icon: Badge(
+                  isLabelVisible: booking.hasUnreadMessages(contractor),
+                  backgroundColor: EdenDarkColors.accent,
+                  child: const Icon(Icons.chat_bubble_outline),
+                ),
                 label: const Text('Messages'),
               ),
           ],
@@ -1756,11 +2107,56 @@ class ChatScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> {
+class _ChatScreenState extends ConsumerState<ChatScreen>
+    with WidgetsBindingObserver {
   final _message = TextEditingController();
+  bool _visible = true;
+  bool _markingRead = false;
+  int _lastRead = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _visible = lifecycle == null || lifecycle == AppLifecycleState.resumed ||
+        (kIsWeb && lifecycle == AppLifecycleState.inactive);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    setState(
+      () => _visible =
+          state == AppLifecycleState.resumed ||
+          (kIsWeb && state == AppLifecycleState.inactive),
+    );
+  }
+
+  Future<void> _markRead(Booking booking) async {
+    if (!mounted ||
+        !_visible ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        _markingRead ||
+        _lastRead >= booking.messages.length)
+      return;
+    if (!booking.hasUnreadMessages(widget.contractor)) return;
+    _markingRead = true;
+    try {
+      final count = booking.messages.length;
+      await ref
+          .read(bookingsProvider.notifier)
+          .markMessagesRead(booking.id, count);
+      if (mounted) _lastRead = count;
+    } catch (_) {
+      // The next booking refresh retries without interrupting the conversation.
+    } finally {
+      _markingRead = false;
+    }
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _message.dispose();
     super.dispose();
   }
@@ -1778,6 +2174,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         children: [Text('Booking unavailable.')],
       );
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _markRead(booking));
     Future<void> send([Uint8List? image]) async {
       final message = _message.text.trim();
       if (message.isEmpty && image == null) return;

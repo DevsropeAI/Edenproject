@@ -44,6 +44,9 @@ class Property {
     this.photo,
     this.pin,
     this.isDefault = false,
+    this.structuredAddress = const {},
+    this.measurements = const {},
+    this.cityId,
   });
   final int id;
   final String name;
@@ -53,6 +56,15 @@ class Property {
   final Uint8List? photo;
   final ({double latitude, double longitude})? pin;
   final bool isDefault;
+  final Map<String, dynamic> structuredAddress;
+  final Map<String, dynamic> measurements;
+  final int? cityId;
+  String get fullAddress => structuredAddress.isEmpty
+      ? address
+      : ['street', 'city', 'state', 'postalCode', 'country']
+            .map((key) => structuredAddress[key] as String? ?? '')
+            .where((value) => value.isNotEmpty)
+            .join(', ');
 
   Property withDefault(bool value) => Property(
     id,
@@ -64,6 +76,9 @@ class Property {
     photo: photo,
     pin: pin,
     isDefault: value,
+    structuredAddress: structuredAddress,
+    measurements: measurements,
+    cityId: cityId,
   );
   final String notes;
 
@@ -78,6 +93,13 @@ class Property {
       type: json['type'] as String,
       photo: _decodeImage(json['photo']),
       isDefault: json['isDefault'] == true,
+      structuredAddress: Map<String, dynamic>.from(
+        json['structuredAddress'] as Map? ?? {},
+      ),
+      measurements: Map<String, dynamic>.from(
+        json['measurements'] as Map? ?? {},
+      ),
+      cityId: (json['cityId'] as num?)?.toInt(),
       pin: pin == null
           ? null
           : (
@@ -116,6 +138,8 @@ class Booking {
     this.review = '',
     this.declined = false,
     this.customerNotices = const [],
+    this.customerRead = 0,
+    this.contractorRead = 0,
   });
 
   final int id;
@@ -135,6 +159,12 @@ class Booking {
   final String review;
   final bool declined;
   final List<OrderNotice> customerNotices;
+  final int customerRead;
+  final int contractorRead;
+
+  bool hasUnreadMessages(bool contractor) => messages
+      .skip(contractor ? contractorRead : customerRead)
+      .any((message) => message.contractor != contractor);
 
   factory Booking.fromJson(Map<String, dynamic> json) => Booking(
     id: json['id'] as int,
@@ -151,6 +181,8 @@ class Booking {
     after: _decodeImage(json['after']),
     rating: json['rating'] as int?,
     review: json['review'] as String? ?? '',
+    customerRead: (json['chatRead'] as Map?)?['customer'] as int? ?? 0,
+    contractorRead: (json['chatRead'] as Map?)?['contractor'] as int? ?? 0,
     customerNotices: [
       for (final notice in json['customerNotices'] as List? ?? const [])
         (
@@ -196,6 +228,8 @@ class Booking {
     review: review ?? this.review,
     declined: declined ?? this.declined,
     customerNotices: customerNotices,
+    customerRead: customerRead,
+    contractorRead: contractorRead,
   );
 }
 
@@ -330,6 +364,9 @@ class Properties extends MarketplaceRecords<Property> {
     required String type,
     Uint8List? photo,
     ({double latitude, double longitude})? pin,
+    Map<String, dynamic>? structuredAddress,
+    Map<String, dynamic>? measurements,
+    Map<String, dynamic>? addressSelection,
   }) => saveChange((api) async {
     await api.post(
       path,
@@ -344,6 +381,9 @@ class Properties extends MarketplaceRecords<Property> {
         'pin': pin == null
             ? null
             : {'latitude': pin.latitude, 'longitude': pin.longitude},
+        if (structuredAddress != null) 'structuredAddress': structuredAddress,
+        if (measurements != null) 'measurements': measurements,
+        if (addressSelection != null) 'addressSelection': addressSelection,
       },
     );
   });
@@ -358,6 +398,13 @@ class Properties extends MarketplaceRecords<Property> {
 }
 
 class Bookings extends MarketplaceRecords<Booking> {
+  Future<void> markMessagesRead(int id, int count) async {
+    await ref
+        .read(apiClientProvider)
+        .post('$path/$id', data: {'action': 'read', 'count': count});
+    await refresh(silent: true);
+  }
+
   @override
   String get path => '/bookings';
 
