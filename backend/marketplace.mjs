@@ -63,7 +63,7 @@ const currentPropertyJoin = `LEFT JOIN properties p ON p.owner = b.customer_id
   AND p.id = JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.property.id'))`;
 
 const booking = row => {
-  const { location, releasedBy, ...details } = parse(row.details);
+  const { location, releasedBy, assignmentHistory, ...details } = parse(row.details);
   return { ...details, id: row.id, status: row.status, version: row.version };
 };
 
@@ -176,7 +176,8 @@ export async function marketplace({ method, path, user, run, first, read, addres
   if (path === '/api/bookings') {
     if (method === 'GET') {
       if (user.role === 'customer') {
-        return (await run('SELECT * FROM bookings WHERE customer_id = ? ORDER BY id DESC', user.id)).map(booking);
+        return (await run('SELECT * FROM bookings WHERE customer_id = ? ORDER BY id DESC', user.id))
+          .filter(row => !parse(row.details).customerDeleted).map(booking);
       }
       const records = await run(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''} FROM bookings b
         ${currentPropertyJoin} WHERE b.contractor_id = ? OR
@@ -251,6 +252,35 @@ export async function marketplace({ method, path, user, run, first, read, addres
       if (!customer && !assigned) error(404, 'Booking unavailable.');
       if (status === 'cancelled') error(409, 'This booking was cancelled.');
       switch (body.action) {
+        case 'delete':
+          if (!customer || status !== 'searching' || contractor != null) error(409, 'Only unaccepted bookings can be deleted.');
+          details.customerDeleted = true;
+          details.paused = true;
+          status = 'cancelled';
+          break;
+        case 'edit': {
+          if (!customer || status !== 'searching' || contractor != null) error(409, 'Only unaccepted bookings can be edited.');
+          const date = typeof body.date === 'string' ? Date.parse(body.date) : NaN;
+          if (!Number.isFinite(date) || date <= Date.now() || date > Date.now() + 366 * 86400_000) error(400, 'Choose a valid future date.');
+          details.date = new Date(date).toISOString();
+          details.notes = text(body.notes, 2000);
+          break;
+        }
+        case 'cancel':
+          if (!assigned || !['enRoute', 'arrived', 'working', 'submitted'].includes(status)) error(409, 'Cancellation is available after departure. Use Release job before departure.');
+          details.assignmentHistory = [...(details.assignmentHistory ?? []), {
+            contractorId: user.id, status, at: new Date().toISOString(),
+            before: details.before ?? null, after: details.after ?? null,
+            messages: details.messages ?? [], chatRead: details.chatRead ?? {},
+          }];
+          details.releasedBy = [...new Set([...(details.releasedBy ?? []), user.id])];
+          details.messages = [];
+          details.chatRead = {};
+          details.before = null;
+          details.after = null;
+          status = 'searching';
+          contractor = null;
+          break;
         case 'release':
           if (!assigned || status !== 'accepted') error(409, 'Only accepted jobs can be released before departure.');
           status = 'searching';

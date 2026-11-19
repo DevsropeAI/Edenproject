@@ -505,7 +505,7 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                           enabled: !_busy,
                           citiesOnly: true,
                           registration: true,
-                          onEdited: () => _workCity = null,
+                          onEdited: () => setState(() => _workCity = null),
                           onSelected: (city) {
                             setState(() {
                               _workCity = city;
@@ -517,6 +517,10 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                             });
                           },
                         ),
+                        if (_workCity != null)
+                          const Text(
+                            'Service city selected. It will be saved with your account.',
+                          ),
                         DropdownButtonFormField<String>(
                           initialValue: _service,
                           decoration: const InputDecoration(

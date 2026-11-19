@@ -488,4 +488,20 @@ class Bookings extends MarketplaceRecords<Booking> {
   Future<bool> release(int id) => saveChange((api) async {
     await api.post('$path/$id', data: {'action': 'release'});
   });
+
+  Future<bool> bookingAction(int id, String action) => saveChange((api) async {
+    await api.post('$path/$id', data: {'action': action});
+  });
+
+  Future<bool> editSchedule(int id, DateTime date, String notes) =>
+      saveChange((api) async {
+        await api.post(
+          '$path/$id',
+          data: {
+            'action': 'edit',
+            'date': date.toUtc().toIso8601String(),
+            'notes': notes,
+          },
+        );
+      });
 }

@@ -1630,10 +1630,50 @@ class _JobCard extends StatelessWidget {
                   icon: const Icon(Icons.arrow_forward, size: 18),
                   label: const Text('View details'),
                 ),
+                if (booking.status != JobStatus.searching &&
+                    booking.status != JobStatus.cancelled &&
+                    booking.hasUnreadMessages(true))
+                  BookingMessageButton(booking: booking, contractor: true),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class BookingMessageButton extends StatelessWidget {
+  const BookingMessageButton({
+    super.key,
+    required this.booking,
+    required this.contractor,
+  });
+  final Booking booking;
+  final bool contractor;
+
+  @override
+  Widget build(BuildContext context) {
+    final unread = booking.hasUnreadMessages(contractor);
+    return OutlinedButton.icon(
+      onPressed: () => context.push('/chat/${booking.id}', extra: contractor),
+      icon: const Icon(Icons.chat_bubble_outline),
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Messages'),
+          if (unread) ...[
+            const SizedBox(width: EdenSpacing.sm),
+            Semantics(
+              label: 'Unread messages',
+              child: const Icon(
+                Icons.circle,
+                size: EdenSpacing.gap,
+                color: EdenDarkColors.accent,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1774,16 +1814,7 @@ class BookingDetailsScreen extends ConsumerWidget {
             if (booking.notes.isNotEmpty) Text(booking.notes),
             if (booking.status != JobStatus.searching &&
                 booking.status != JobStatus.cancelled)
-              OutlinedButton.icon(
-                onPressed: () =>
-                    context.push('/chat/${booking.id}', extra: contractor),
-                icon: Badge(
-                  isLabelVisible: booking.hasUnreadMessages(contractor),
-                  backgroundColor: EdenDarkColors.accent,
-                  child: const Icon(Icons.chat_bubble_outline),
-                ),
-                label: const Text('Messages'),
-              ),
+              BookingMessageButton(booking: booking, contractor: contractor),
           ],
         ),
         if (!contractor && booking.status == JobStatus.enRoute)
@@ -1868,6 +1899,52 @@ class BookingDetailsScreen extends ConsumerWidget {
                 ),
             ],
           ),
+        if (!contractor && booking.status == JobStatus.searching)
+          Wrap(
+            spacing: EdenSpacing.sm,
+            runSpacing: EdenSpacing.sm,
+            children: [
+              OutlinedButton.icon(
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('Edit booking'),
+                onPressed: () => showCustomerDialog<void>(
+                  context: context,
+                  dark: true,
+                  builder: (_) => _EditBookingDialog(booking: booking),
+                ),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Delete booking'),
+                onPressed: () =>
+                    _confirmBookingAction(context, ref, booking, 'delete'),
+              ),
+            ],
+          ),
+        if (!contractor &&
+            [
+              JobStatus.accepted,
+              JobStatus.enRoute,
+              JobStatus.arrived,
+              JobStatus.working,
+              JobStatus.submitted,
+            ].contains(booking.status))
+          const Text(
+            'Need to cancel? Message your contractor. Once they leave the job, you can delete the unassigned booking.',
+          ),
+        if (contractor &&
+            [
+              JobStatus.enRoute,
+              JobStatus.arrived,
+              JobStatus.working,
+              JobStatus.submitted,
+            ].contains(booking.status))
+          OutlinedButton.icon(
+            icon: const Icon(Icons.cancel_outlined),
+            label: const Text('Cancel booking'),
+            onPressed: () =>
+                _confirmBookingAction(context, ref, booking, 'cancel'),
+          ),
         if (contractor && !booking.declined) ...[
           if (booking.status == JobStatus.searching)
             Column(
@@ -1891,12 +1968,39 @@ class BookingDetailsScreen extends ConsumerWidget {
                   ),
                 const SizedBox(height: EdenSpacing.gap),
                 OutlinedButton(
-                  onPressed: () {
-                    notifier.change(
+                  onPressed: () async {
+                    final confirmed = await showCustomerDialog<bool>(
+                      context: context,
+                      dark: true,
+                      builder: (dialog) => AlertDialog(
+                        constraints: const BoxConstraints(
+                          maxWidth: EdenSpacing.content,
+                        ),
+                        icon: const Icon(Icons.warning_amber_rounded),
+                        title: const Text('Decline this job?'),
+                        content: const Text(
+                          'Are you sure? You will lose access to this offer. Choose Keep job to return without declining. Other contractors can still accept it.',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialog, false),
+                            child: const Text('Keep job'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.pop(dialog, true),
+                            child: const Text('Decline job'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (!context.mounted || confirmed != true) return;
+                    final declined = await notifier.change(
                       booking.id,
                       (current) => current.update(declined: true),
                     );
-                    context.go('/contractor-home');
+                    if (context.mounted && declined) {
+                      context.go('/contractor-home');
+                    }
                   },
                   child: const Text('Decline'),
                 ),
@@ -2012,7 +2116,7 @@ class BookingDetailsScreen extends ConsumerWidget {
         MarketCard(
           children: [
             MarketHeading('Service progress'),
-            if (!contractor && booking.status == JobStatus.cancelled)
+            if (booking.status == JobStatus.cancelled)
               const StatusChip(label: 'Cancelled')
             else
               StatusStepper(
@@ -2031,6 +2135,152 @@ class BookingDetailsScreen extends ConsumerWidget {
       ],
     );
   }
+}
+
+Future<void> _confirmBookingAction(
+  BuildContext context,
+  WidgetRef ref,
+  Booking booking,
+  String action,
+) async {
+  final deleting = action == 'delete';
+  final confirmed = await showCustomerDialog<bool>(
+    context: context,
+    dark: true,
+    builder: (dialog) => AlertDialog(
+      constraints: const BoxConstraints(maxWidth: EdenSpacing.content),
+      title: Text(deleting ? 'Delete this booking?' : 'Cancel this booking?'),
+      content: Text(
+        deleting
+            ? 'This unaccepted booking will be removed from your list and will no longer be offered to contractors.'
+            : 'This removes your assignment. The customer keeps the booking and can delete it, or another matching contractor can accept it. You will no longer see this offer.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialog, false),
+          child: const Text('Keep booking'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialog, true),
+          child: Text(deleting ? 'Delete booking' : 'Cancel booking'),
+        ),
+      ],
+    ),
+  );
+  if (!context.mounted || confirmed != true) return;
+  final saved = await ref
+      .read(bookingsProvider.notifier)
+      .bookingAction(booking.id, action);
+  if (context.mounted && saved) context.pop();
+}
+
+class _EditBookingDialog extends ConsumerStatefulWidget {
+  const _EditBookingDialog({required this.booking});
+  final Booking booking;
+  @override
+  ConsumerState<_EditBookingDialog> createState() => _EditBookingDialogState();
+}
+
+class _EditBookingDialogState extends ConsumerState<_EditBookingDialog> {
+  late final _notes = TextEditingController(text: widget.booking.notes);
+  late DateTime _date = widget.booking.date.toLocal();
+  bool _busy = false;
+  String? _error;
+  @override
+  void dispose() {
+    _notes.dispose();
+    super.dispose();
+  }
+
+  Future<void> _schedule() async {
+    final now = DateTime.now();
+    final day = await showDatePicker(
+      context: context,
+      initialDate: _date.isBefore(now) ? now : _date,
+      firstDate: DateUtils.dateOnly(now),
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (!mounted || day == null) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_date),
+    );
+    if (!mounted || time == null) return;
+    setState(
+      () => _date = DateTime(
+        day.year,
+        day.month,
+        day.day,
+        time.hour,
+        time.minute,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Edit booking'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Update the schedule and instructions before a contractor accepts. Your quoted price stays the same.',
+          ),
+          const SizedBox(height: EdenSpacing.screen),
+          OutlinedButton(
+            onPressed: _busy ? null : _schedule,
+            child: Text(DateFormat('MMM d, yyyy · h:mm a').format(_date)),
+          ),
+          const SizedBox(height: EdenSpacing.screen),
+          TextField(
+            controller: _notes,
+            enabled: !_busy,
+            maxLength: 2000,
+            minLines: 2,
+            maxLines: 4,
+            decoration: const InputDecoration(labelText: 'Instructions'),
+          ),
+          if (_error != null) Text(_error!),
+          if (_busy) const LinearProgressIndicator(),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _busy ? null : () => Navigator.pop(context),
+        child: const Text('Back'),
+      ),
+      FilledButton(
+        onPressed: _busy
+            ? null
+            : () async {
+                if (!_date.isAfter(DateTime.now())) {
+                  setState(() => _error = 'Choose a future date and time.');
+                  return;
+                }
+                setState(() {
+                  _busy = true;
+                  _error = null;
+                });
+                final saved = await ref
+                    .read(bookingsProvider.notifier)
+                    .editSchedule(widget.booking.id, _date, _notes.text);
+                if (!mounted || !context.mounted) return;
+                if (saved) {
+                  Navigator.pop(context);
+                } else {
+                  setState(() {
+                    _busy = false;
+                    _error = 'Could not save. The booking may have been accepted. Close and refresh before trying again.';
+                  });
+                }
+              },
+        child: const Text('Save changes'),
+      ),
+    ],
+  );
 }
 
 class _ReviewDialog extends ConsumerStatefulWidget {
@@ -2118,7 +2368,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void initState() {
     super.initState();
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    _visible = lifecycle == null || lifecycle == AppLifecycleState.resumed ||
+    _visible =
+        lifecycle == null ||
+        lifecycle == AppLifecycleState.resumed ||
         (kIsWeb && lifecycle == AppLifecycleState.inactive);
     WidgetsBinding.instance.addObserver(this);
   }

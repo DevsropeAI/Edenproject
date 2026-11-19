@@ -164,11 +164,35 @@ class _AddressSearchFieldState extends ConsumerState<AddressSearchField> {
             }
           },
         ),
+        if (canSearch && !autocomplete)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: widget.enabled && !_loading
+                  ? () => _search(false)
+                  : null,
+              icon: const Icon(Icons.search),
+              label: Text(
+                widget.citiesOnly ? 'Search cities' : 'Search addresses',
+              ),
+            ),
+          ),
         if (_loading) const LinearProgressIndicator(),
         if (_message != null) Text(_message!),
         if (!canSearch && !capabilities.isLoading)
           const Text(
             'Address lookup is unavailable. Enter your details manually.',
+          ),
+        if (capabilities.hasError)
+          TextButton(
+            onPressed: () {
+              if (widget.registration) {
+                ref.invalidate(registrationCityCapabilitiesProvider);
+              } else {
+                ref.invalidate(geoCapabilitiesProvider);
+              }
+            },
+            child: const Text('Retry address lookup'),
           ),
         if (_results?.isEmpty == true)
           Text(
