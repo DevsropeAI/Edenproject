@@ -1,4 +1,5 @@
 import 'work_location_editor.dart';
+import 'contractor_services_editor.dart';
 
 import 'dart:typed_data';
 import 'dart:convert';
@@ -166,6 +167,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                 },
               ),
               if (user.role == 'contractor') const WorkLocationEditor(),
+              if (user.role == 'contractor') const ContractorServicesEditor(),
               FilledButton(
                 onPressed: _deleting || _saving
                     ? null

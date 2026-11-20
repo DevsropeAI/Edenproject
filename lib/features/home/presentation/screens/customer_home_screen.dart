@@ -21,11 +21,10 @@ class CustomerHomeScreen extends ConsumerWidget {
               booking.status != JobStatus.cancelled,
         )
         .firstOrNull;
-    final services = [
-      (Service.snow, Icons.ac_unit, 'Driveway and entrance'),
-      (Service.lawn, Icons.grass, 'Lawn maintenance'),
-      (Service.cleaning, Icons.cleaning_services_outlined, 'Home cleaning'),
-    ].where((item) => catalog.value?.containsKey(item.$1) == true);
+    final details = ref.watch(serviceDetailsProvider).value ?? const <Map<String,dynamic>>[];
+    final services = [for(final service in catalog.value?.keys ?? <Service>[])
+      (service,service.isSnow ? Icons.ac_unit : Icons.home_repair_service_outlined,
+        details.where((row)=>row['id']==service.name).firstOrNull?['description'] as String? ?? 'Home services')];
     return MarketPage(
       title: 'Eden',
       dark: true,

@@ -1,6 +1,9 @@
 import { image, marketplace } from './marketplace.mjs';
 import { createGeocoding } from './geocoding.mjs';
 import { createAddressStore } from './addresses.mjs';
+import { createPricing } from './pricing.mjs';
+import { catalogAdmin, contractorServices } from './catalog-routes.mjs';
+import { mapData, markerConfig } from './map-data.mjs';
 import { createServer } from 'node:http';
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
@@ -70,11 +73,14 @@ export function createApi({
   phoneVerification,
   payments,
   structuredAddresses = false,
+  servicesPricing = false,
+  walking,
   geocoding = createGeocoding(),
 } = {}) {
   const run = async (sql, ...args) => (await db.execute(sql, args))[0];
   const first = async (sql, ...args) => (await run(sql, ...args))[0];
   const addressStore = structuredAddresses ? createAddressStore(run, first) : null;
+  const pricing = servicesPricing ? createPricing(db) : null;
   const userById = id => first('SELECT * FROM users WHERE id = ?', id);
   const publicUser = ({ id, email, name, phone, role, customer, contractor, area, service, city_id }) => ({
     id, email, name, phone, role, area, service, cityId: city_id ?? null,
@@ -97,7 +103,11 @@ export function createApi({
     const method = req.method;
     if (method === 'POST' && path === '/api/payments/webhook' && payments) return payments.webhook(req, run, first);
     if (method === 'GET' && path === '/api/health') return { status: 'ok' };
+    if (method === 'GET' && path === '/api/map-config') return markerConfig;
     if (method === 'GET' && path === '/api/services') {
+      if (pricing) return run(`SELECT id,title,price_cents AS priceCents,service_category,
+        short_description AS description,image_url AS imageUrl,estimated_duration_minutes AS durationMinutes,
+        minimum_price_cents AS minimumPriceCents,currency FROM services WHERE active=1 ORDER BY service_category DESC,title`);
       return run('SELECT id, title, price_cents AS priceCents FROM services WHERE active = 1 ORDER BY id');
     }
     if (method === 'POST' && path === '/api/auth/password-reset/request') {
@@ -227,10 +237,20 @@ export function createApi({
       if (!adminKey || !timingSafeEqual(Buffer.from(digest(authorization)), Buffer.from(digest('Bearer ' + adminKey)))) {
         fail(401, 'Admin authentication required.');
       }
+      if(walking&&(path.startsWith('/api/admin/walking/')||path.endsWith('/door-to-door'))){
+        const result=await walking.route({method,path,admin:true,body:method==='POST'?await readJson(req):{},params:new URL(req.url,'http://localhost').searchParams});
+        if(result!==undefined)return result;
+      }
+      if (pricing) {
+        if(method==='GET'&&path==='/api/admin/map') return mapData(run,{role:'admin'});
+        const response=await catalogAdmin({path,method,read:()=>readJson(req),run});
+        if(response!==undefined)return response;
+      }
       if (method === 'GET' && path === '/api/admin/dashboard') {
         const accounts = await run('SELECT * FROM users ORDER BY name');
         const record = user => ({ id: user.id, title: user.name, detail: user.email, status: user.blocked ? 'Blocked' : 'Active' });
         return {
+          ...(pricing?{Map:[]} : {}),
           Orders: (await run(`SELECT id, status,
             JSON_UNQUOTE(JSON_EXTRACT(details, '$.service')) AS service,
             JSON_UNQUOTE(JSON_EXTRACT(details, '$.total')) AS total
@@ -239,11 +259,11 @@ export function createApi({
               detail: row.service + ' · CAD ' + row.total, status: row.status,
             })),
           Customers: accounts.filter(user => user.customer).map(record),
-          Contractors: accounts.filter(user => user.contractor).map(record),
+          Contractors: accounts.filter(user => user.contractor).map(user=>({...record(user),doorToDoorEnabled:Boolean(user.door_to_door_enabled)})),
           Payments: payments ? await payments.adminList(run) : [],
           Services: (await run('SELECT * FROM services ORDER BY id')).map(service => ({
             id: service.id, title: service.title, detail: 'CAD ' + (service.price_cents / 100).toFixed(2),
-            priceCents: service.price_cents, status: service.active ? 'Active' : 'Inactive',
+            priceCents: service.price_cents, service_category: service.service_category ?? 'small', status: service.active ? 'Active' : 'Inactive',
           })),
           Verification: await run(`SELECT users.id, users.name AS title, users.email AS detail,
             COALESCE(contractor_reviews.status, 'Pending') AS status, COUNT(account_images.kind) = 2 AS complete
@@ -319,6 +339,18 @@ export function createApi({
       WHERE sessions.token = ? AND sessions.expires > ? AND users.blocked = 0
     `, session, Date.now());
     if (!user) fail(401, 'Sign in to continue.');
+    if(walking&&path.startsWith('/api/walking/'))return walking.route({method,path,user,body:method==='POST'?await readJson(req,100000):{}});
+    if(pricing&&method==='GET'&&path==='/api/contractor/map')return mapData(run,user);
+    if (pricing && path==='/api/contractor/services') return contractorServices({method,user,read:()=>readJson(req),run,db});
+    if (pricing && path==='/api/quotes' && method==='POST') return pricing.quote(user,await readJson(req));
+    if (pricing && path==='/api/add-ons' && method==='GET') {
+      if(user.role!=='customer')fail(403,'Switch to customer mode.');
+      return run('SELECT id,service_id,name,price_cents FROM add_ons WHERE active=1 ORDER BY name');
+    }
+    if (pricing && user.role==='contractor' && path.startsWith('/api/bookings')) {
+      user.additionalServices=(await run(`SELECT service_id FROM contractor_services WHERE user_id=?
+        UNION SELECT id AS service_id FROM services WHERE LOWER(title)=LOWER(?)`,user.id,user.service)).map(r=>r.service_id);
+    }
     if (path.startsWith('/api/geo/')) {
       if (!roles.has(user.role)) fail(403, 'Choose a customer or contractor account.');
       if (method !== 'GET') fail(405, 'Use a GET request.');
@@ -461,7 +493,7 @@ export function createApi({
         return { saved: true };
       }
     }
-    const result = await marketplace({ method, path, user, run, first, addressStore, read: () => readJson(req, 3_000_000) });
+    const result = await marketplace({ method, path, user, run, first, addressStore, pricing, read: () => readJson(req, 3_000_000) });
     if (result !== undefined) return result;
     fail(404, 'Endpoint not found.');
   }
@@ -491,3 +523,4 @@ export function createApi({
 
   return server;
 }
+

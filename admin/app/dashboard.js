@@ -1,5 +1,7 @@
 import { updateStatus } from './actions';
 import { DocumentPreview } from './document-preview';
+import MarketplaceMap from './marketplace-map';
+import {setWalkingAccess} from './walking-actions';
 
 const statuses = {
   Customers: ['Active', 'Blocked'],
@@ -21,6 +23,12 @@ function Record({ section, search, record }) {
     <article className="record">
       <div><h3>{record.title}</h3><p>{record.detail}</p></div>
       {section === 'Verification' && <DocumentPreview record={record} />}
+      {section==='Contractors'&&<form action={setWalkingAccess.bind(null,record.id)} className="walking-access">
+        <input type="hidden" name="enabled" value={String(!record.doorToDoorEnabled)}/>
+        <button type="submit" role="switch" aria-checked={Boolean(record.doorToDoorEnabled)} aria-label={`Door-to-door access for ${record.title}`}>
+          Door-to-door <span>{record.doorToDoorEnabled?'Enabled':'Disabled'}</span>
+        </button>
+      </form>}
       {canCancel ? (
         <form action={updateStatus.bind(null, section, search)} className="record-actions">
           <span>{record.status}</span>
@@ -33,6 +41,7 @@ function Record({ section, search, record }) {
         <form action={updateStatus.bind(null, section, search)} className="record-actions">
           <input type="hidden" name="type" value={types[section] ?? 'accounts'} />
           {section === 'Services' && <label>Price (CAD) <input name="price" type="number" min="1" max="10000" step="0.01" required defaultValue={record.priceCents / 100} /></label>}
+          {section === 'Services' && <label>Category <select name="service_category" defaultValue={record.service_category??'small'}><option value="small">Small</option><option value="large">Large</option></select></label>}
           <input type="hidden" name="id" value={record.id} />
           <select key={record.status} name="status" aria-label={'Status for ' + record.title} defaultValue={section === 'Payments' ? options[0] : record.status}>
             {options.map(status => <option key={status} disabled={status === 'Pending'}>{status}</option>)}
@@ -44,7 +53,7 @@ function Record({ section, search, record }) {
   );
 }
 
-export function Dashboard({ data, section, search, result }) {
+export function Dashboard({ data, section, search, result, mapData }) {
   const query = search.trim().toLowerCase();
   const records = data[section].filter(({ title, detail, status }) =>
     [title, detail, status].some(value => value.toLowerCase().includes(query)),
@@ -76,15 +85,16 @@ export function Dashboard({ data, section, search, result }) {
         <section className="records">
           <div className="toolbar">
             <h2>{section}</h2>
-            <form action="/" method="get" className="record-actions">
+            {section!=='Map'&&<form action="/" method="get" className="record-actions">
               <input type="hidden" name="section" value={section} />
               <label>Search <input key={section + ':' + search} type="search" name="search" defaultValue={search} /></label>
               <button type="submit">Search</button>
-            </form>
+            </form>}
           </div>
           {result === 'saved' && <p role="status">Saved.</p>}
           {result === 'error' && <p role="alert">Could not save. Check the record and try again.</p>}
-          {!records.length && <p>No matching records.</p>}
+          {section==='Map'&&mapData&&<MarketplaceMap data={mapData} search={search} contractors={data.Contractors}/>}
+          {section!=='Map'&&!records.length && <p>No matching records.</p>}
           {records.map(record => <Record key={section + record.id} section={section} search={search} record={record} />)}
         </section>
       </main>

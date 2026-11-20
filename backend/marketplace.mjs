@@ -48,7 +48,7 @@ function matchesOffer(details, user) {
     : details.property?.address?.split(',')[1]?.trim().toLowerCase() === user.area?.trim().toLowerCase();
   const city = details.property?.address?.split(',')[1]?.trim().toLowerCase();
   return Boolean(sameCity && (details.property?.cityId != null || city) &&
-    details.service === primaryServiceIds.get(user.service) &&
+    (details.service === primaryServiceIds.get(user.service) || user.additionalServices?.includes(details.service)) &&
     !details.releasedBy?.includes(user.id));
 }
 
@@ -62,9 +62,12 @@ function offerDetails(row) {
 const currentPropertyJoin = `LEFT JOIN properties p ON p.owner = b.customer_id
   AND p.id = JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.property.id'))`;
 
-const booking = row => {
+const booking = (row, audience) => {
   const { location, releasedBy, assignmentHistory, ...details } = parse(row.details);
-  return { ...details, id: row.id, status: row.status, version: row.version };
+  if (audience?.role === 'contractor') delete details.breakdown;
+  return { ...details, id: row.id, status: row.status, version: row.version,
+    ...(row.service_category ? { service_category: row.service_category } : {}),
+    ...(audience?.role !== 'contractor' && row.quoted_total_cents != null ? { quoted_total_cents: row.quoted_total_cents, currency: row.currency } : {}) };
 };
 
 async function bookingLocation(id, { method, user, run, first, read }) {
@@ -96,7 +99,7 @@ async function bookingLocation(id, { method, user, run, first, read }) {
   error(403, 'Location sharing is unavailable.');
 }
 
-export async function marketplace({ method, path, user, run, first, read, addressStore }) {
+export async function marketplace({ method, path, user, run, first, read, addressStore, pricing }) {
   if (path.startsWith('/api/properties')) {
     if (user.role !== 'customer') error(403, 'Switch to customer mode.');
     if (path === '/api/properties') {
@@ -186,7 +189,7 @@ export async function marketplace({ method, path, user, run, first, read, addres
         ORDER BY b.id DESC`, user.id, user.id, user.id, user.id);
       return records.filter(row => row.contractor_id === user.id ||
         matchesOffer(offerDetails(row), user)).map(row => {
-        const job = booking({ ...row, details: offerDetails(row) });
+        const job = booking({ ...row, details: offerDetails(row) }, user);
         if (row.contractor_id !== user.id) {
           const location = job.property;
           job.property = { id: location.id, name: 'Service property', address: user.area,
@@ -200,6 +203,10 @@ export async function marketplace({ method, path, user, run, first, read, addres
     if (method === 'POST') {
       if (user.role !== 'customer') error(403, 'Switch to customer mode.');
       const body = await read();
+      if (pricing) return pricing.place(user, body, {
+        notes: text(body.notes, 2000), recurring: body.recurring === true,
+        referencePhoto: image(body.referencePhoto), review: '', messages: [],
+      });
       const selected = await first('SELECT * FROM properties WHERE id = ? AND owner = ?', Number(body.propertyId) || 0, user.id);
       if (!selected) error(404, 'Property unavailable.');
       const date = typeof body.date === 'string' ? Date.parse(body.date) : NaN;
@@ -336,7 +343,7 @@ export async function marketplace({ method, path, user, run, first, read, addres
               count > details.messages.length) error(400, 'Invalid conversation position.');
           const role = customer ? 'customer' : 'contractor';
           const previous = details.chatRead?.[role] ?? 0;
-          if (count <= previous) return booking(row);
+          if (count <= previous) return booking(row, user);
           details.chatRead = { ...details.chatRead, [role]: count };
           break;
         }
@@ -353,7 +360,7 @@ export async function marketplace({ method, path, user, run, first, read, addres
     const result = await run(`UPDATE bookings SET details = ?, status = ?, contractor_id = ?, version = version + 1
       WHERE id = ? AND version = ?`, JSON.stringify(details), status, contractor, id, row.version);
     if (!result.affectedRows) error(409, 'The booking changed. Refresh and try again.');
-    return booking({ id, status, version: row.version + 1, details });
+    return booking({ ...row, id, status, version: row.version + 1, details }, user);
   }
   return undefined;
 }

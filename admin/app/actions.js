@@ -12,7 +12,7 @@ export async function updateStatus(section, search, formData) {
   const { type, id, status, price } = Object.fromEntries(formData);
   const formats = {
     accounts: /^[a-f0-9]{64}$/, support: /^[a-f0-9]{64}$/, orders: /^\d+$/,
-    services: /^(snow|lawn|cleaning)$/, verification: /^[a-f0-9]{64}$/,
+    services: /^[A-Za-z][A-Za-z0-9]{0,19}$/, verification: /^[a-f0-9]{64}$/,
     payments: /^[a-f0-9-]{36}$/,
   };
   if (!Object.hasOwn(formats, type) || typeof id !== 'string' || !formats[type].test(id)) {
@@ -21,7 +21,8 @@ export async function updateStatus(section, search, formData) {
   const priceCents = type === 'services' ? Math.round(Number(price) * 100) : undefined;
   const query = new URLSearchParams({ section, search });
   try {
-    await adminRequest('/' + type + '/' + id, { method: 'POST', body: JSON.stringify({ status, priceCents }) });
+    await adminRequest('/' + type + '/' + id, { method: 'POST', body: JSON.stringify({ status, priceCents,
+      ...(type==='services'?{service_category:formData.get('service_category')}:{}) }) });
     query.set('result', 'saved');
   } catch (error) {
     console.error(error);

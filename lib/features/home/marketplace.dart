@@ -12,11 +12,21 @@ import '../auth/providers/auth_provider.dart';
 enum Service {
   snow('Snow Removal', 45),
   lawn('Lawn Mowing', 30),
-  cleaning('House Cleaning', 85);
+  cleaning('House Cleaning', 85),
+  drivewaySnow('Driveway Snow Clearing',40),
+  walkwayClear('Walkway Clearing',20),
+  entranceClear('Front Entrance Clearing',25),
+  leaf('Leaf Removal',40), tree('Tree Trimming',75),
+  landscaping('Landscaping',80), yard('Yard Cleaning',50),
+  pressure('Pressure Washing',90), gutter('Gutter Cleaning',65),
+  hardscaping('Hardscaping',300), paver('Paver Installation',400),
+  drivewayBuild('Driveway Construction',500), walkwayBuild('Walkway Construction',250),
+  retainingWall('Retaining Wall Installation',450);
 
   const Service(this.label, this.price);
   final String label;
   final int price;
+  bool get isSnow => [Service.snow,Service.drivewaySnow,Service.walkwayClear,Service.entranceClear].contains(this);
 }
 
 enum JobStatus {
@@ -271,6 +281,22 @@ final serviceCatalogProvider = FutureProvider.autoDispose<Map<Service, int>>((
   };
 });
 
+final serviceDetailsProvider = FutureProvider.autoDispose<List<Map<String,dynamic>>>((ref) async {
+  final response=await ref.watch(apiClientProvider).get('/services');
+  return (response.data as List).map((row)=>Map<String,dynamic>.from(row as Map)).toList();
+});
+final addOnsProvider = FutureProvider.autoDispose<List<Map<String,dynamic>>>((ref) async {
+  final response=await ref.watch(apiClientProvider).get('/add-ons');
+  return (response.data as List).map((row)=>Map<String,dynamic>.from(row as Map)).toList();
+});
+final quoteProvider = FutureProvider.autoDispose.family<Map<String,dynamic>,String>((ref,key) async {
+  final api=ref.watch(apiClientProvider);
+  await Future<void>.delayed(const Duration(milliseconds:400));
+  if(!ref.mounted)return {};
+  final response=await api.post('/quotes',data:jsonDecode(key));
+  return Map<String,dynamic>.from(response.data as Map);
+});
+
 final propertiesProvider = NotifierProvider<Properties, List<Property>>(
   Properties.new,
 );
@@ -421,6 +447,10 @@ class Bookings extends MarketplaceRecords<Booking> {
     bool urgent = false,
     bool walkway = false,
     bool discount = false,
+    String? couponCode,
+    String? snowDepth,
+    List<String> addOnIds = const [],
+    int? expectedTotalCents,
   }) => saveChange((api) async {
     await api.post(
       path,
@@ -434,6 +464,10 @@ class Bookings extends MarketplaceRecords<Booking> {
         'urgent': urgent,
         'walkway': walkway,
         'discount': discount,
+        if(couponCode!=null)'couponCode':couponCode,
+        if(snowDepth!=null)'snowDepth':snowDepth,
+        'addOnIds':addOnIds,
+        if(expectedTotalCents!=null)'expectedTotalCents':expectedTotalCents,
       },
     );
   });

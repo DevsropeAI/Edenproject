@@ -9,7 +9,7 @@ if (!['127.0.0.1', 'localhost', '[::1]'].includes(database.hostname)) {
 }
 const [operation, fileArgument, target] = process.argv.slice(2);
 if (!['backup', 'restore'].includes(operation) || !fileArgument) {
-  throw new Error('Usage: node backend/scripts/database-backup.mjs backup FILE | restore FILE TARGET_DATABASE');
+  throw new Error('Usage: node backend/scripts/database-backup.mjs backup FILE [--skip-events] | restore FILE TARGET_DATABASE');
 }
 const file = resolve(fileArgument);
 const bin = process.env.EDEN_MYSQL_BIN ?? 'C:/Program Files/MySQL/MySQL Server 8.0/bin';
@@ -25,7 +25,8 @@ if (operation === 'backup') {
   if (existsSync(file)) throw new Error('Backup file already exists. Choose a new file.');
   mkdirSync(resolve(file, '..'), { recursive: true });
   const result = spawnSync(resolve(bin, 'mysqldump.exe'), [
-    ...connection, '--single-transaction', '--quick', '--routines', '--events',
+    ...connection, '--single-transaction', '--quick', '--routines',
+    process.argv.slice(2).includes('--skip-events') ? '--skip-events' : '--events',
     '--triggers', '--hex-blob', '--no-tablespaces', '--set-gtid-purged=OFF',
     '--result-file=' + file, database.pathname.slice(1),
   ], { env, encoding: 'utf8' });

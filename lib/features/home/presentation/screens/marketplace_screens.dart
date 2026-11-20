@@ -8,6 +8,7 @@ import '../../../../core/widgets/app_background.dart';
 import '../../../../core/widgets/glass_controls.dart';
 
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -19,6 +20,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../../auth/providers/auth_provider.dart';
+import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../auth/domain/auth_state.dart';
 import '../../marketplace.dart';
 import 'demo_settings_screen.dart';
@@ -27,6 +29,8 @@ import 'profile_tools.dart';
 import 'account_extras_screen.dart';
 import 'property_map.dart';
 import 'booking_location.dart';
+import 'marketplace_map.dart';
+import 'walking_screen.dart';
 
 import 'package:latlong2/latlong.dart';
 
@@ -1047,6 +1051,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   bool _urgent = false;
   bool _recurring = false;
   bool _walkway = false;
+  String _snowDepth = 'light';
+  final Set<String> _addOnIds = {};
   Uint8List? _referencePhoto;
   final _coupon = TextEditingController();
 
@@ -1124,15 +1130,18 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     final service = options.containsKey(_service)
         ? _service
         : options.keys.first;
-    final base = options[service]! / 100 + (property.size == 'Large' ? 15 : 0);
-    final rushFee = _urgent ? 20 : 0;
-    final walkwayFee = service == Service.snow && _walkway ? 12 : 0;
-    final subtotal = base + rushFee + walkwayFee;
-    final discount = _coupon.text.trim().toUpperCase() == 'EDEN10'
-        ? (subtotal * 10).round() / 100
-        : 0;
-    final tax = ((subtotal - discount) * 13).round() / 100;
-    final total = subtotal - discount + tax;
+    final addons=ref.watch(addOnsProvider);
+    final details=ref.watch(serviceDetailsProvider).value ?? const <Map<String,dynamic>>[];
+    final quoteState=ref.watch(quoteProvider(jsonEncode({
+      'propertyId':property.id,'service':service.name,
+      if(_scheduled!=null)'date':_scheduled!.toUtc().toIso8601String(),
+      'urgent':_urgent,'walkway':service==Service.snow&&_walkway,
+      'couponCode':_coupon.text.trim().toUpperCase(),
+      if(service.isSnow)'snowDepth':_snowDepth,'addOnIds':_addOnIds.toList()..sort(),
+    })));
+    final quote=quoteState.value;
+    final total=((quote?['totalCents'] as num?)??0)/100;
+    final walkwayFee=service==Service.snow&&_walkway?12:0;
     return MarketPage(
       dark: true,
       title: 'Book a service',
@@ -1150,9 +1159,10 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               decoration: const InputDecoration(labelText: 'Service'),
               items: [
                 for (final service in options.keys)
-                  DropdownMenuItem(value: service, child: Text(service.label)),
+                  DropdownMenuItem(value: service, child: Text('${service.label}${details.where((row)=>row['id']==service.name).firstOrNull?['service_category']=='large'?' · Large project':''}',overflow:TextOverflow.ellipsis)),
               ],
-              onChanged: (service) => setState(() => _service = service!),
+              isExpanded:true,
+              onChanged: (service) => setState(() { _service = service!; _addOnIds.clear(); }),
             ),
             OutlinedButton.icon(
               onPressed: _pickSchedule,
@@ -1182,15 +1192,26 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                 value: _walkway,
                 onChanged: (value) => setState(() => _walkway = value ?? false),
               ),
+            if(service.isSnow) DropdownButtonFormField<String>(
+              initialValue:_snowDepth,decoration:const InputDecoration(labelText:'Snow depth'),
+              items:const [DropdownMenuItem(value:'light',child:Text('Light')),DropdownMenuItem(value:'moderate',child:Text('Moderate')),DropdownMenuItem(value:'heavy',child:Text('Heavy'))],
+              onChanged:(value)=>setState(()=>_snowDepth=value!),
+            ),
+            if(addons.isLoading) const LinearProgressIndicator(),
+            if(addons.hasError) TextButton(onPressed:()=>ref.invalidate(addOnsProvider),child:const Text('Retry loading add-ons')),
+            for(final addon in addons.value??const <Map<String,dynamic>>[])
+              if(addon['service_id']==service.name && addon['id']!='snow-walkway') CheckboxListTile(
+                contentPadding:EdgeInsets.zero,
+                title:Text('${addon['name']} · ${_money.format((addon['price_cents'] as num)/100)} CAD'),
+                value:_addOnIds.contains(addon['id']),
+                onChanged:(selected)=>setState(() {if(selected==true){_addOnIds.add(addon['id'] as String);}else{_addOnIds.remove(addon['id']);}}),
+              ),
             TextField(
               controller: _coupon,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Promo code',
                 helperText: 'Demo code: EDEN10',
-                errorText: _coupon.text.trim().isNotEmpty && discount == 0
-                    ? 'Code is not recognized'
-                    : null,
               ),
             ),
             _field(_notes, 'Instructions for the contractor'),
@@ -1211,18 +1232,19 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           solid: true,
           children: [
             MarketHeading('Instant quote'),
-            Text('Service  ${_money.format(base)}'),
-            if (_urgent) Text('Urgent fee  ${_money.format(rushFee)}'),
-            if (walkwayFee > 0)
-              Text('Walkway clearing  ${_money.format(walkwayFee)}'),
-            if (discount > 0)
-              Text('Promo discount  -${_money.format(discount)}'),
-            Text('Estimated tax  ${_money.format(tax)}'),
+            if(quoteState.isLoading)const LinearProgressIndicator(),
+            if(quoteState.hasError)Text(apiError(quoteState.error!)),
+            for(final item in quote?['items'] as List? ?? const [])Text('${item['label']??'Base service'}  ${_money.format((item['amountCents'] as num)/100)}'),
+            if(quote!=null)...[
+              Text('Base service  ${_money.format(options[service]!/100)}'),
+              Text('Promo discount  -${_money.format((quote['discountCents'] as num)/100)}'),
+              Text('${quote['taxName']} (${(quote['taxRateBps'] as num)/100}%)  ${_money.format((quote['taxCents'] as num)/100)}'),
+            ],
             const Divider(),
             MarketHeading('Total  ${_money.format(total)} CAD'),
-            const Text('Payment is available after the booking is completed.'),
+            Text(quote?['paymentTiming']=='at_booking'?'Payment is due at booking.':'Payment is available after the booking is completed.'),
             FilledButton(
-              onPressed: _scheduled == null
+              onPressed: _scheduled == null || quote==null || quoteState.isLoading || quoteState.hasError
                   ? null
                   : () async {
                       if (!_scheduled!.isAfter(DateTime.now())) {
@@ -1279,7 +1301,10 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             referencePhoto: _referencePhoto,
                             urgent: _urgent,
                             walkway: _walkway,
-                            discount: discount > 0,
+                            couponCode:_coupon.text.trim().toUpperCase(),
+                            snowDepth:service.isSnow?_snowDepth:null,
+                            addOnIds:_addOnIds.toList(),
+                            expectedTotalCents:quote['totalCents'] as int,
                           );
                       if (placed && context.mounted) context.go('/bookings');
                     },
@@ -1428,6 +1453,8 @@ class BookingListScreen extends ConsumerWidget {
                 ),
           ],
         if (contractor) ...[
+          const WalkingEntry(),
+          const MarketCard(children: [MarketplaceMap()]),
           const _ContractorShortcuts(),
           MarketCard(children: [ModeSwitchTile(contractor: true, area: area)]),
         ],

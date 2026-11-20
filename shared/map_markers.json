@@ -1,0 +1,9 @@
+{
+  "customer": {"color":"#E8412C","shape":"pin","size":32,"label":"Customer / small open lead"},
+  "large": {"color":"#A52B1B","shape":"pin","size":44,"badge":"L","label":"Large open lead"},
+  "contractor": {"color":"#3B82F6","shape":"circle","size":28,"label":"Contractor (solid: online; outlined: offline)"},
+  "active": {"color":"#E8412C","shape":"pin","size":36,"badge":"◉","label":"Active job (ring)"},
+  "completed": {"color":"#E8412C","shape":"pin","size":36,"badge":"✓","label":"Completed job"},
+  "walking": {"color":"#A78BFA","weight":4,"dashArray":"8 6"},
+  "offlineOpacity": 0.45
+}

@@ -1,6 +1,7 @@
 import { openDatabase } from './db.mjs';
 import { configureDatabase } from './local-setup.mjs';
 import { createApi } from './server.mjs';
+import { createWalking } from './walking.mjs';
 import { runWeeklyBookings } from './weekly-bookings.mjs';
 import nodemailer from 'nodemailer';
 import Stripe from 'stripe';
@@ -25,9 +26,15 @@ const db = await openDatabase(databaseUrl);
 // Enable only after reviewing and approving the migration for this database.
 if (process.env.EDEN_APPLY_ADDRESS_MIGRATION === 'true') await runAddressMigration(db);
 const structuredAddresses = await addressesReady(db);
+const [migrationTables] = await db.execute("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='schema_migrations'");
+const [pricingVersions] = migrationTables.length ? await db.execute("SELECT version FROM schema_migrations WHERE version='002_services_pricing'") : [[]];
+const [walkingVersions]=migrationTables.length?await db.execute("SELECT version FROM schema_migrations WHERE version='003_walking_shifts'"):[[]];
+const walking=walkingVersions.length&&process.env.EDEN_ENABLE_WALKING!=='false'?createWalking(db):undefined;
 const server = createApi({
   db,
   structuredAddresses,
+  servicesPricing: pricingVersions.length===1,
+  walking,
   payments,
   origins: (process.env.EDEN_ORIGINS ?? '').split(',').map(origin => origin.trim()),
   adminKey: process.env.EDEN_ADMIN_KEY,
@@ -39,6 +46,11 @@ const server = createApi({
 }).listen(port, process.env.HOST ?? '0.0.0.0', () => {
   console.log('Eden API listening on port ' + port);
 });
+if(walking){
+  let busy=false;
+  const tick=async()=>{if(busy)return;busy=true;try{await walking.maintenance();}catch(e){console.error('Walking maintenance failed',e.code??e.name);}finally{busy=false;}};
+  const timer=setInterval(tick,60000);timer.unref();
+}
 if (process.env.EDEN_ENABLE_WEEKLY_ORDERS === 'true') {
   let running = false;
   const tick = async () => {

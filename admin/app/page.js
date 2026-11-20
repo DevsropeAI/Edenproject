@@ -7,7 +7,8 @@ export default async function Page({ searchParams }) {
   try {
     const { section, search, result } = await searchParams;
     const data = await adminRequest('/dashboard');
-    return <Dashboard data={data}
+    const mapData=section==='Map'?await adminRequest('/map'):null;
+    return <Dashboard data={data} mapData={mapData}
       section={typeof section === 'string' && Object.hasOwn(data, section) ? section : 'Customers'}
       result={result}
       search={typeof search === 'string' ? search : ''}
