@@ -74,6 +74,7 @@ export function createApi({
   payments,
   structuredAddresses = false,
   servicesPricing = false,
+  largeJobsDispatch = false,
   walking,
   geocoding = createGeocoding(),
 } = {}) {
@@ -241,16 +242,44 @@ export function createApi({
         const result=await walking.route({method,path,admin:true,body:method==='POST'?await readJson(req):{},params:new URL(req.url,'http://localhost').searchParams});
         if(result!==undefined)return result;
       }
+      if(method==='GET'&&path==='/api/admin/map') return mapData(run,{role:'admin'});
       if (pricing) {
-        if(method==='GET'&&path==='/api/admin/map') return mapData(run,{role:'admin'});
         const response=await catalogAdmin({path,method,read:()=>readJson(req),run});
         if(response!==undefined)return response;
       }
       if (method === 'GET' && path === '/api/admin/dashboard') {
         const accounts = await run('SELECT * FROM users ORDER BY name');
         const record = user => ({ id: user.id, title: user.name, detail: user.email, status: user.blocked ? 'Blocked' : 'Active' });
+        const contractorRows = largeJobsDispatch ? await run(`
+          SELECT users.*, services.id AS primaryServiceId,
+            COALESCE(contractor_reviews.status, 'Pending') AS verificationStatus
+          FROM users
+          LEFT JOIN services ON LOWER(services.title) = LOWER(users.service)
+          LEFT JOIN contractor_reviews ON contractor_reviews.user_id = users.id
+          WHERE users.contractor = 1 ORDER BY users.name
+        `) : accounts.filter(user => user.contractor);
+        const additionalServiceRows = largeJobsDispatch
+          ? await run('SELECT user_id, service_id FROM contractor_services')
+          : [];
+        const additionalServices = new Map();
+        for (const row of additionalServiceRows) {
+          const serviceIds = additionalServices.get(row.user_id) ?? [];
+          serviceIds.push(row.service_id);
+          additionalServices.set(row.user_id, serviceIds);
+        }
+        const contractors = contractorRows.map(user => ({
+          ...record(user),
+          doorToDoorEnabled: Boolean(user.door_to_door_enabled),
+          area: user.area ?? '',
+          cityId: user.city_id ?? null,
+          verificationStatus: user.verificationStatus ?? 'Pending',
+          serviceIds: [...new Set([
+            user.primaryServiceId,
+            ...(additionalServices.get(user.id) ?? []),
+          ].filter(Boolean))],
+        }));
         return {
-          ...(pricing?{Map:[]} : {}),
+          Map: [],
           Orders: (await run(`SELECT id, status,
             JSON_UNQUOTE(JSON_EXTRACT(details, '$.service')) AS service,
             JSON_UNQUOTE(JSON_EXTRACT(details, '$.total')) AS total
@@ -259,7 +288,7 @@ export function createApi({
               detail: row.service + ' · CAD ' + row.total, status: row.status,
             })),
           Customers: accounts.filter(user => user.customer).map(record),
-          Contractors: accounts.filter(user => user.contractor).map(user=>({...record(user),doorToDoorEnabled:Boolean(user.door_to_door_enabled)})),
+          Contractors: contractors,
           Payments: payments ? await payments.adminList(run) : [],
           Services: (await run('SELECT * FROM services ORDER BY id')).map(service => ({
             id: service.id, title: service.title, detail: 'CAD ' + (service.price_cents / 100).toFixed(2),
@@ -270,6 +299,18 @@ export function createApi({
             FROM users JOIN account_images ON account_images.user_id = users.id AND account_images.kind <> 'profile'
             LEFT JOIN contractor_reviews ON contractor_reviews.user_id = users.id
             WHERE users.contractor = 1 GROUP BY users.id, users.name, users.email, contractor_reviews.status`),
+          LargeJobs: largeJobsDispatch ? await run(`SELECT b.id, b.dispatch_status,
+            JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.service')) AS service,
+            JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.total')) AS total,
+            JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.property.address')) AS address,
+            JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.property.cityId')) AS cityId
+            FROM bookings b WHERE b.dispatch_status = 'pending_admin' AND b.status = 'searching' ORDER BY b.id DESC`).then(rows => rows.map(row => ({
+              id: String(row.id), title: 'Large Job #' + row.id,
+              serviceId: row.service,
+              cityId: row.cityId == null ? null : Number(row.cityId),
+              detail: row.service + ' - CAD ' + row.total,
+              address: row.address, status: row.dispatch_status,
+            }))) : [],
           Support: await run(`SELECT support.id, support.description AS title, users.email AS detail, support.status
             FROM support JOIN users ON users.id = support.user_id ORDER BY support.created_at DESC, support.id DESC`),
         };
@@ -316,6 +357,37 @@ export function createApi({
           WHERE id = ? AND status NOT IN ('completed', 'cancelled')`, order[1]);
         if (!result.affectedRows) fail(409, 'This booking cannot be cancelled.');
         return { status };
+      }
+      const dispatch = /^\/api\/admin\/dispatch\/(\d+)$/.exec(path);
+      if (dispatch && method === 'POST') {
+        if (!largeJobsDispatch) fail(503, 'Large-job dispatch is awaiting the database migration.');
+        const { action, contractorId, reason, note } = await readJson(req);
+        const bookingId = Number(dispatch[1]);
+        if (action === 'assign') {
+          if (!contractorId) fail(400, 'Choose a contractor.');
+          const contractor = await first('SELECT * FROM users WHERE id = ? AND contractor = 1 AND blocked = 0', contractorId);
+          if (!contractor) fail(404, 'Contractor unavailable.');
+          const bookingRow = await first("SELECT JSON_UNQUOTE(JSON_EXTRACT(details, '$.service')) AS service FROM bookings WHERE id = ?", bookingId);
+          if (!bookingRow) fail(404, 'Job not found.');
+          const approved = await first("SELECT 1 AS ok FROM contractor_reviews WHERE user_id = ? AND status = 'Approved'", contractorId);
+          if (!approved) fail(409, 'This contractor is not verified.');
+          const primaryService = await first('SELECT 1 AS ok FROM services WHERE id = ? AND LOWER(title) = LOWER(?)', bookingRow.service, contractor.service);
+          const additionalService = await first('SELECT 1 AS ok FROM contractor_services WHERE user_id = ? AND service_id = ?', contractorId, bookingRow.service);
+          const offersService = Boolean(primaryService || additionalService);
+          if (!offersService) fail(409, 'This contractor does not offer this service.');
+          const result = await run(`UPDATE bookings SET dispatch_status = 'assigned', assigned_contractor_id = ?, assigned_by_admin_id = (SELECT id FROM users WHERE email = ? AND role = 'admin' LIMIT 1), assigned_at = NOW(), admin_note = ? WHERE id = ? AND dispatch_status = 'pending_admin'`,
+            contractorId, req.adminEmail ?? 'admin', note || null, bookingId);
+          if (!result.affectedRows) fail(409, 'This job is no longer pending.');
+          return { status: 'assigned' };
+        }
+        if (action === 'reject') {
+          if (!reason) fail(400, 'A reason is required.');
+          const result = await run(`UPDATE bookings SET dispatch_status = 'rejected', status = 'cancelled', rejection_reason = ?, assigned_by_admin_id = (SELECT id FROM users WHERE email = ? AND role = 'admin' LIMIT 1) WHERE id = ? AND dispatch_status IN ('pending_admin', 'assigned')`,
+            reason, req.adminEmail ?? 'admin', bookingId);
+          if (!result.affectedRows) fail(409, 'This job cannot be rejected.');
+          return { status: 'rejected' };
+        }
+        fail(400, 'Unknown action.');
       }
       const match = /^\/api\/admin\/(accounts|support)\/([a-f0-9]{64})$/.exec(path);
       if (method === 'POST' && match) {

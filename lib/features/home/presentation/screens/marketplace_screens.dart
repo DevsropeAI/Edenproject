@@ -1374,7 +1374,7 @@ class BookingListScreen extends ConsumerWidget {
       (booking) =>
           !contractor ||
           (!booking.declined &&
-              (booking.status != JobStatus.searching || available)),
+              (booking.status != JobStatus.searching || available || booking.dispatchStatus == 'assigned')),
     );
     return MarketPage(
       title: contractor ? 'Eden Contractor' : 'My bookings',
@@ -2049,8 +2049,10 @@ class BookingDetailsScreen extends ConsumerWidget {
                         ),
                         icon: const Icon(Icons.warning_amber_rounded),
                         title: const Text('Decline this job?'),
-                        content: const Text(
-                          'Are you sure? You will lose access to this offer. Choose Keep job to return without declining. Other contractors can still accept it.',
+                        content: Text(
+                          booking.dispatchStatus == 'assigned'
+                              ? 'Are you sure? Declining this admin-assigned job will return it to the admin queue for reassignment. Choose Keep job to return without declining.'
+                              : 'Are you sure? You will lose access to this offer. Choose Keep job to return without declining. Other contractors can still accept it.',
                         ),
                         actions: [
                           TextButton(

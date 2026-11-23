@@ -7,7 +7,11 @@ import nodemailer from 'nodemailer';
 import Stripe from 'stripe';
 import { createPayments } from './payments.mjs';
 import { createPhoneVerification } from './phone-verification.mjs';
-import { addressesReady, runAddressMigration } from './migrations/runner.mjs';
+import {
+  addressesReady,
+  runAddressMigration,
+  runLargeJobsDispatchMigration,
+} from './migrations/runner.mjs';
 
 const databaseUrl = await configureDatabase();
 const { EDEN_SMTP_URL, EDEN_EMAIL_FROM } = process.env;
@@ -28,12 +32,26 @@ if (process.env.EDEN_APPLY_ADDRESS_MIGRATION === 'true') await runAddressMigrati
 const structuredAddresses = await addressesReady(db);
 const [migrationTables] = await db.execute("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='schema_migrations'");
 const [pricingVersions] = migrationTables.length ? await db.execute("SELECT version FROM schema_migrations WHERE version='002_services_pricing'") : [[]];
+
+if (process.env.EDEN_APPLY_LARGE_JOBS_MIGRATION === 'true') {
+  if (pricingVersions.length !== 1) {
+    throw new Error('Cannot apply large-job dispatch migration before services pricing migration 002 is applied.');
+  }
+  await runLargeJobsDispatchMigration(db);
+}
+
+const [largeJobsMigrationTables] = await db.execute("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='schema_migrations'");
+const [largeJobsVersions] = largeJobsMigrationTables.length
+  ? await db.execute("SELECT version FROM schema_migrations WHERE version='004_large_jobs_dispatch'")
+  : [[]];
+const largeJobsDispatch = largeJobsVersions.length === 1;
 const [walkingVersions]=migrationTables.length?await db.execute("SELECT version FROM schema_migrations WHERE version='003_walking_shifts'"):[[]];
 const walking=walkingVersions.length&&process.env.EDEN_ENABLE_WALKING!=='false'?createWalking(db):undefined;
 const server = createApi({
   db,
   structuredAddresses,
   servicesPricing: pricingVersions.length===1,
+  largeJobsDispatch,
   walking,
   payments,
   origins: (process.env.EDEN_ORIGINS ?? '').split(',').map(origin => origin.trim()),

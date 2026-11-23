@@ -118,8 +118,9 @@ export function createPricing(db) {
         if (input.expectedTotalCents != null && input.expectedTotalCents!==breakdown.totalCents) fail(409,'The quote changed. Review the updated total before booking.');
         const details={...validated,...schedule,property,service:service.id,total:breakdown.totalCents/100,breakdown,
           options:{urgent:input.urgent===true,walkway:input.walkway===true,snowDepth:input.snowDepth??null,addOnIds:input.addOnIds??[]}};
-        const [result]=await c.execute('INSERT INTO bookings (customer_id,details,service_category,quoted_total_cents,currency) VALUES (?,?,?,?,?)',
-          [user.id,JSON.stringify(details),service.service_category,breakdown.totalCents,breakdown.currency]);
+        const dispatchStatus = service.service_category === 'large' ? 'pending_admin' : 'open';
+        const [result]=await c.execute('INSERT INTO bookings (customer_id,details,service_category,quoted_total_cents,currency,dispatch_status) VALUES (?,?,?,?,?,?)',
+          [user.id,JSON.stringify(details),service.service_category,breakdown.totalCents,breakdown.currency,dispatchStatus]);
         if(breakdown.couponCode) {
           const [used]=await c.execute('UPDATE coupons SET uses=uses+1 WHERE code=? AND (max_uses IS NULL OR uses<max_uses)',[breakdown.couponCode]);
           if(!used.affectedRows) fail(409,'This promo code has been used up.');

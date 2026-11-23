@@ -211,3 +211,181 @@ export async function runWalkingMigration(db) {
     finally { c.release(); }
   }
 }
+
+
+
+// Dedicated 004 handler for large-job dispatch.
+// This function is never executed on import or automatically by startup.
+export async function runLargeJobsDispatchMigration(db) {
+  const c = await db.getConnection();
+  let locked = false;
+  const version = '004_large_jobs_dispatch';
+
+  try {
+    const [[lock]] = await c.query(
+      "SELECT GET_LOCK(CONCAT(DATABASE(), ':eden-migrations'), 20) AS acquired",
+    );
+    if (lock.acquired !== 1) throw new Error('Could not acquire migration lock.');
+    locked = true;
+
+    if (await versionApplied(c, version)) return { version, status: 'skipped' };
+
+    // Verify users.id and bookings defaults before any schema changes.
+    const [[userId]] = await c.query(
+      "SELECT COLUMN_TYPE, CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME='id'",
+    );
+    const [[bookingsTable]] = await c.query(
+      "SELECT TABLE_COLLATION AS collation_name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='bookings'",
+    );
+
+    if (
+      !userId ||
+      userId.COLUMN_TYPE.toLowerCase() !== 'char(64)' ||
+      !userId.CHARACTER_SET_NAME ||
+      !userId.COLLATION_NAME ||
+      !bookingsTable ||
+      bookingsTable.collation_name !== userId.COLLATION_NAME
+    ) {
+      throw new Error('Large-job dispatch foreign-key preflight failed. No schema changes attempted.');
+    }
+
+    // Check existing assignment columns directly against users.id.
+    const [existingAssignmentColumns] = await c.query(
+      "SELECT COLUMN_NAME, COLUMN_TYPE, CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='bookings' AND COLUMN_NAME IN ('assigned_contractor_id','assigned_by_admin_id')",
+    );
+    for (const row of existingAssignmentColumns) {
+      if (
+        row.COLUMN_TYPE.toLowerCase() !== userId.COLUMN_TYPE.toLowerCase() ||
+        row.CHARACTER_SET_NAME !== userId.CHARACTER_SET_NAME ||
+        row.COLLATION_NAME !== userId.COLLATION_NAME
+      ) {
+        throw new Error(`Large-job dispatch preflight failed for bookings.${row.COLUMN_NAME}. No schema changes attempted.`);
+      }
+    }
+
+    // Ensure migration tracking exists after all preflight checks pass.
+    if (!await tableExists(c, 'schema_migrations')) {
+      await c.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+        version VARCHAR(80) PRIMARY KEY,
+        applied_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+      ) ENGINE=InnoDB`);
+    }
+
+    const columns = [
+      ['dispatch_status', "ENUM('open','pending_admin','assigned','rejected') NOT NULL DEFAULT 'open'"],
+      ['assigned_contractor_id', 'CHAR(64) NULL DEFAULT NULL'],
+      ['assigned_by_admin_id', 'CHAR(64) NULL DEFAULT NULL'],
+      ['assigned_at', 'DATETIME(6) NULL DEFAULT NULL'],
+      ['admin_note', 'TEXT NULL DEFAULT NULL'],
+      ['rejection_reason', 'TEXT NULL DEFAULT NULL'],
+    ];
+
+    for (const [column, definition] of columns) {
+      const [[row]] = await c.execute(
+        'SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?',
+        ['bookings', column],
+      );
+      if (!Number(row.n)) {
+        await c.query(`ALTER TABLE bookings ADD COLUMN ${column} ${definition}`);
+      }
+    }
+
+    const indexes = [
+      ['idx_bookings_dispatch_status', 'dispatch_status'],
+      ['idx_bookings_assigned_contractor', 'assigned_contractor_id'],
+    ];
+
+    for (const [name, column] of indexes) {
+      const [[row]] = await c.execute(
+        'SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND INDEX_NAME=?',
+        ['bookings', name],
+      );
+      if (!Number(row.n)) {
+        await c.query(`CREATE INDEX ${name} ON bookings (${column})`);
+      }
+    }
+
+    const foreignKeys = [
+      ['fk_bookings_assigned_contractor', 'assigned_contractor_id'],
+      ['fk_bookings_assigned_admin', 'assigned_by_admin_id'],
+    ];
+
+    for (const [name, column] of foreignKeys) {
+      const [[row]] = await c.execute(
+        "SELECT COUNT(*) AS n FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE() AND TABLE_NAME=? AND CONSTRAINT_NAME=? AND CONSTRAINT_TYPE='FOREIGN KEY'",
+        ['bookings', name],
+      );
+      if (!Number(row.n)) {
+        await c.query(
+          `ALTER TABLE bookings ADD CONSTRAINT ${name} FOREIGN KEY (${column}) REFERENCES users(id) ON DELETE SET NULL`,
+        );
+      }
+    }
+
+    // Verify all six columns and their expected definitions.
+    const [actualColumns] = await c.query(
+      "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='bookings' AND COLUMN_NAME IN ('dispatch_status','assigned_contractor_id','assigned_by_admin_id','assigned_at','admin_note','rejection_reason')",
+    );
+    const expectedTypes = new Map([
+      ['dispatch_status', "enum('open','pending_admin','assigned','rejected')"],
+      ['assigned_contractor_id', 'char(64)'],
+      ['assigned_by_admin_id', 'char(64)'],
+      ['assigned_at', 'datetime(6)'],
+      ['admin_note', 'text'],
+      ['rejection_reason', 'text'],
+    ]);
+
+    if (
+      actualColumns.length !== expectedTypes.size ||
+      actualColumns.some(row =>
+        row.COLUMN_TYPE.toLowerCase() !== expectedTypes.get(row.COLUMN_NAME) ||
+        (row.COLUMN_NAME !== 'dispatch_status' && row.IS_NULLABLE !== 'YES')
+      )
+    ) {
+      throw new Error('Large-job dispatch column verification failed; migration not recorded.');
+    }
+
+    // Verify each index is on the intended column.
+    const [actualIndexes] = await c.query(
+      "SELECT INDEX_NAME, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='bookings' AND INDEX_NAME IN ('idx_bookings_dispatch_status','idx_bookings_assigned_contractor') AND SEQ_IN_INDEX=1",
+    );
+    if (
+      indexes.some(([name, column]) =>
+        !actualIndexes.some(row => row.INDEX_NAME === name && row.COLUMN_NAME === column)
+      )
+    ) {
+      throw new Error('Large-job dispatch index verification failed; migration not recorded.');
+    }
+
+    // Verify both foreign keys point to users.id.
+    const [actualForeignKeys] = await c.query(
+      "SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='bookings' AND CONSTRAINT_NAME IN ('fk_bookings_assigned_contractor','fk_bookings_assigned_admin')",
+    );
+    if (
+      actualForeignKeys.length !== 2 ||
+      foreignKeys.some(([name, column]) =>
+        !actualForeignKeys.some(row =>
+          row.CONSTRAINT_NAME === name &&
+          row.COLUMN_NAME === column &&
+          row.REFERENCED_TABLE_NAME === 'users' &&
+          row.REFERENCED_COLUMN_NAME === 'id'
+        )
+      )
+    ) {
+      throw new Error('Large-job dispatch foreign-key verification failed; migration not recorded.');
+    }
+
+    await c.query(
+      "INSERT IGNORE INTO schema_migrations (version) VALUES ('004_large_jobs_dispatch')",
+    );
+    return { version, status: 'applied' };
+  } finally {
+    try {
+      if (locked) {
+        await c.query("SELECT RELEASE_LOCK(CONCAT(DATABASE(), ':eden-migrations'))");
+      }
+    } finally {
+      c.release();
+    }
+  }
+}

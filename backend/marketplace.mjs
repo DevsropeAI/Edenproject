@@ -68,6 +68,8 @@ const booking = (row, audience) => {
   if (audience?.role === 'contractor') delete details.breakdown;
   return { ...details, id: row.id, status: row.status, version: row.version,
     ...(row.service_category ? { service_category: row.service_category } : {}),
+    ...(row.dispatch_status ? { dispatch_status: row.dispatch_status } : {}),
+    ...(row.rejection_reason ? { rejection_reason: row.rejection_reason } : {}),
     ...(audience?.role !== 'contractor' && row.quoted_total_cents != null ? { quoted_total_cents: row.quoted_total_cents, currency: row.currency } : {}) };
 };
 
@@ -184,11 +186,11 @@ export async function marketplace({ method, path, user, run, first, read, addres
           .filter(row => !parse(row.details).customerDeleted).map(booking);
       }
       const records = await run(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''} FROM bookings b
-        ${currentPropertyJoin} WHERE b.contractor_id = ? OR
-        (b.status = 'searching' AND b.customer_id <> ? AND NOT EXISTS (SELECT 1 FROM preferences p WHERE p.user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(p.details, '$.available')) = 'false') AND NOT EXISTS (
+        ${currentPropertyJoin} WHERE b.contractor_id = ? OR (b.dispatch_status = 'assigned' AND b.assigned_contractor_id = ? AND b.contractor_id IS NULL AND b.status = 'searching') OR
+        (b.status = 'searching' AND b.dispatch_status = 'open' AND b.customer_id <> ? AND NOT EXISTS (SELECT 1 FROM preferences p WHERE p.user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(p.details, '$.available')) = 'false') AND NOT EXISTS (
           SELECT 1 FROM declined_jobs d WHERE d.booking_id = b.id AND d.contractor_id = ?))
-        ORDER BY b.id DESC`, user.id, user.id, user.id, user.id);
-      return records.filter(row => row.contractor_id === user.id ||
+        ORDER BY b.id DESC`, user.id, user.id, user.id, user.id, user.id);
+      return records.filter(row => row.contractor_id === user.id || (row.dispatch_status === 'assigned' && row.assigned_contractor_id === user.id) ||
         matchesOffer(offerDetails(row), user)).map(row => {
         const job = booking({ ...row, details: offerDetails(row) }, user);
         if (row.contractor_id !== user.id) {
@@ -242,12 +244,20 @@ export async function marketplace({ method, path, user, run, first, read, addres
     const assigned = user.role === 'contractor' && row.contractor_id === user.id;
     const available = user.role === 'contractor' && !await first("SELECT 1 FROM preferences WHERE user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(details, '$.available')) = 'false'", user.id);
     const details = offerDetails(row);
-    const offered = available && row.customer_id && row.customer_id !== user.id &&
-      row.status === 'searching' && matchesOffer(details, user);
+    const offered = user.role === 'contractor' && row.customer_id && row.customer_id !== user.id &&
+      row.status === 'searching' && (row.dispatch_status ?? 'open') !== 'pending_admin' && (row.dispatch_status ?? 'open') !== 'rejected' &&
+      (row.dispatch_status === 'assigned'
+        ? row.assigned_contractor_id === user.id
+        : available && matchesOffer(details, user));
     let status = row.status;
     let contractor = row.contractor_id;
     if (offered && body.action === 'decline') {
-      await run('INSERT IGNORE INTO declined_jobs (booking_id, contractor_id) VALUES (?, ?)', id, user.id);
+      if (row.dispatch_status === 'assigned') {
+        const result = await run("UPDATE bookings SET dispatch_status = 'pending_admin', assigned_contractor_id = NULL, assigned_at = NULL, admin_note = CONCAT(COALESCE(admin_note, ''), ' [Declined by contractor]') WHERE id = ? AND dispatch_status = 'assigned' AND contractor_id IS NULL AND assigned_contractor_id = ?", id, user.id);
+        if (!result.affectedRows) error(409, 'The assignment changed. Refresh and try again.');
+      } else {
+        await run('INSERT IGNORE INTO declined_jobs (booking_id, contractor_id) VALUES (?, ?)', id, user.id);
+      }
       return { declined: true };
     }
     if (offered && body.action === 'accept') {
@@ -371,3 +381,4 @@ export async function marketplace({ method, path, user, run, first, read, addres
   }
   return undefined;
 }
+

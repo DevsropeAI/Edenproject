@@ -1,4 +1,4 @@
-import { updateStatus } from './actions';
+import { updateStatus, dispatchJob } from './actions';
 import { DocumentPreview } from './document-preview';
 import MarketplaceMap from './marketplace-map';
 import {setWalkingAccess} from './walking-actions';
@@ -53,7 +53,7 @@ function Record({ section, search, record }) {
   );
 }
 
-export function Dashboard({ data, section, search, result, mapData }) {
+export function Dashboard({ data, section, search, result, mapData, mapError }) {
   const query = search.trim().toLowerCase();
   const records = data[section].filter(({ title, detail, status }) =>
     [title, detail, status].some(value => value.toLowerCase().includes(query)),
@@ -63,6 +63,7 @@ export function Dashboard({ data, section, search, result, mapData }) {
     ['Customers', data.Customers.length],
     ['Contractors', data.Contractors.length],
     ['Open support requests', data.Support.filter(ticket => ticket.status !== 'Resolved').length],
+    ['Large jobs pending', data.LargeJobs?.length ?? 0],
   ];
 
   return (
@@ -94,10 +95,49 @@ export function Dashboard({ data, section, search, result, mapData }) {
           {result === 'saved' && <p role="status">Saved.</p>}
           {result === 'error' && <p role="alert">Could not save. Check the record and try again.</p>}
           {section==='Map'&&mapData&&<MarketplaceMap data={mapData} search={search} contractors={data.Contractors}/>}
+          {section==='Map'&&mapError&&<p role="alert">Could not load the map. Check that the backend is running, then <a href="/?section=Map">try again</a>.</p>}
           {section!=='Map'&&!records.length && <p>No matching records.</p>}
-          {records.map(record => <Record key={section + record.id} section={section} search={search} record={record} />)}
+          {section === 'LargeJobs' ? (
+            records.map(record => (
+              <article key={record.id} className="record">
+                <div>
+                  <h3>{record.title}</h3>
+                  <p>{record.detail}</p>
+                  <p>{record.address}</p>
+                </div>
+                <div className="record-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <form action={dispatchJob.bind(null, record.id, section, search)} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input type="hidden" name="action" value="assign" />
+                    <select name="contractorId" required defaultValue="">
+                      <option value="" disabled>Select Contractor</option>
+                      {data.Contractors.filter(c =>
+                        c.status === 'Active' &&
+                        c.verificationStatus === 'Approved' &&
+                        c.serviceIds.includes(record.serviceId) &&
+                        (record.cityId == null || c.cityId == null || Number(c.cityId) === Number(record.cityId))
+                      ).map(c => (
+                        <option key={c.id} value={c.id}>{c.title} - {c.detail}</option>
+                      ))}
+                    </select>
+                    <input type="text" name="note" placeholder="Admin note (optional)" />
+                    <button type="submit">Assign</button>
+                  </form>
+                  <form action={dispatchJob.bind(null, record.id, section, search)} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input type="hidden" name="action" value="reject" />
+                    <input type="text" name="reason" placeholder="Reason for rejection" required />
+                    <button type="submit" style={{ background: 'var(--error)', color: 'white' }}>Reject</button>
+                  </form>
+                </div>
+              </article>
+            ))
+          ) : (
+            records.map(record => <Record key={section + record.id} section={section} search={search} record={record} />)
+          )}
         </section>
       </main>
     </div>
   );
 }
+
+
+

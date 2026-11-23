@@ -40,3 +40,20 @@ export async function loadDocument(id, kind) {
   }
   return adminRequest('/verification/' + id + '/' + kind);
 }
+
+export async function dispatchJob(id, section, search, formData) {
+  if (!validSession((await cookies()).get(sessionCookie)?.value)) {
+    throw new Error('Admin sign-in required.');
+  }
+  const { action, contractorId, reason, note } = Object.fromEntries(formData);
+  if (!/^\d+$/.test(id)) throw new Error('Invalid job.');
+  const query = new URLSearchParams({ section, search });
+  try {
+    await adminRequest('/dispatch/' + id, { method: 'POST', body: JSON.stringify({ action, contractorId, reason, note }) });
+    query.set('result', 'saved');
+  } catch (error) {
+    console.error(error);
+    query.set('result', 'error');
+  }
+  redirect('/?' + query);
+}

@@ -96,3 +96,221 @@ test('001 applied version skips without DDL or backfills', async () => {
   assert.equal(db.statements.length, 1);
   assert.ok(db.statements[0].includes('RELEASE_LOCK'));
 });
+
+
+
+import { runLargeJobsDispatchMigration } from './migrations/runner.mjs';
+
+function largeJobsMigrationFake({
+  applied = false,
+  compatibleUserId = true,
+  compatibleBookingsCollation = true,
+  hasMigrationTable = true,
+} = {}) {
+  const statements = [];
+  let recorded = applied;
+  let released = 0;
+
+  const expectedColumns = [
+    { COLUMN_NAME: 'dispatch_status', COLUMN_TYPE: "enum('open','pending_admin','assigned','rejected')", IS_NULLABLE: 'NO' },
+    { COLUMN_NAME: 'assigned_contractor_id', COLUMN_TYPE: 'char(64)', IS_NULLABLE: 'YES' },
+    { COLUMN_NAME: 'assigned_by_admin_id', COLUMN_TYPE: 'char(64)', IS_NULLABLE: 'YES' },
+    { COLUMN_NAME: 'assigned_at', COLUMN_TYPE: 'datetime(6)', IS_NULLABLE: 'YES' },
+    { COLUMN_NAME: 'admin_note', COLUMN_TYPE: 'text', IS_NULLABLE: 'YES' },
+    { COLUMN_NAME: 'rejection_reason', COLUMN_TYPE: 'text', IS_NULLABLE: 'YES' },
+  ];
+
+  const expectedIndexes = [
+    { INDEX_NAME: 'idx_bookings_dispatch_status', COLUMN_NAME: 'dispatch_status' },
+    { INDEX_NAME: 'idx_bookings_assigned_contractor', COLUMN_NAME: 'assigned_contractor_id' },
+  ];
+
+  const expectedForeignKeys = [
+    { CONSTRAINT_NAME: 'fk_bookings_assigned_contractor', COLUMN_NAME: 'assigned_contractor_id', REFERENCED_TABLE_NAME: 'users', REFERENCED_COLUMN_NAME: 'id' },
+    { CONSTRAINT_NAME: 'fk_bookings_assigned_admin', COLUMN_NAME: 'assigned_by_admin_id', REFERENCED_TABLE_NAME: 'users', REFERENCED_COLUMN_NAME: 'id' },
+  ];
+
+  const connection = {
+    execute: async (sql, params = []) => {
+      if (sql.includes('information_schema.TABLES')) {
+        return [[{ n: Number(
+          params[0] === 'schema_migrations' && hasMigrationTable,
+        ) }]];
+      }
+      if (sql.startsWith('SELECT version')) {
+        return [recorded ? [{ version: '004_large_jobs_dispatch' }] : []];
+      }
+      if (sql.includes('information_schema.COLUMNS')) {
+        return [[{ n: 0 }]];
+      }
+      if (sql.includes('information_schema.STATISTICS')) {
+        return [[{ n: 0 }]];
+      }
+      if (sql.includes('information_schema.TABLE_CONSTRAINTS')) {
+        return [[{ n: 0 }]];
+      }
+      throw new Error(`Unexpected execute in migration 004 test: ${sql}`);
+    },
+
+    query: async sql => {
+      if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+      if (sql.includes('DEFAULT_CHARACTER_SET_NAME')) {
+        return [[{ charset_name: 'utf8mb4', collation_name: 'utf8mb4_unicode_ci' }]];
+      }
+      if (sql.includes('information_schema.TABLES') && sql.includes("TABLE_NAME='bookings'")) {
+        return [[{
+          collation_name: compatibleBookingsCollation
+            ? 'utf8mb4_unicode_ci'
+            : 'utf8mb4_general_ci',
+        }]];
+      }
+      if (sql.includes("TABLE_NAME='users'")) {
+        return [[{
+          COLUMN_TYPE: compatibleUserId ? 'char(64)' : 'varchar(64)',
+          CHARACTER_SET_NAME: 'utf8mb4',
+          COLLATION_NAME: 'utf8mb4_unicode_ci',
+        }]];
+      }
+      if (sql.includes("COLUMN_NAME IN ('assigned_contractor_id','assigned_by_admin_id')")) {
+        return [[]];
+      }
+      if (sql.includes("COLUMN_NAME IN ('dispatch_status','assigned_contractor_id'")) {
+        return [expectedColumns];
+      }
+      if (sql.includes("INDEX_NAME IN ('idx_bookings_dispatch_status'")) {
+        return [expectedIndexes];
+      }
+      if (sql.includes("CONSTRAINT_NAME IN ('fk_bookings_assigned_contractor'")) {
+        return [expectedForeignKeys];
+      }
+      if (sql.startsWith('INSERT IGNORE INTO schema_migrations')) {
+        statements.push(sql);
+        recorded = true;
+        return [];
+      }
+      if (sql.includes('RELEASE_LOCK')) {
+        released++;
+        return [];
+      }
+      statements.push(sql);
+      return [];
+    },
+
+    release: () => {},
+  };
+
+  return {
+    getConnection: async () => connection,
+    statements,
+    released: () => released,
+    isRecorded: () => recorded,
+  };
+}
+
+test('004 applies dispatch schema, verifies it, and records version last', async () => {
+  const db = largeJobsMigrationFake();
+
+  const result = await runLargeJobsDispatchMigration(db);
+
+  assert.deepEqual(result, {
+    version: '004_large_jobs_dispatch',
+    status: 'applied',
+  });
+
+  assert.equal(
+    db.statements.filter(sql => sql.startsWith('ALTER TABLE bookings ADD COLUMN')).length,
+    6,
+  );
+  assert.equal(
+    db.statements.filter(sql => sql.startsWith('CREATE INDEX')).length,
+    2,
+  );
+  assert.equal(
+    db.statements.filter(sql => sql.startsWith('ALTER TABLE bookings ADD CONSTRAINT')).length,
+    2,
+  );
+
+  const versionInsert = db.statements.findIndex(
+    sql => sql.startsWith('INSERT IGNORE INTO schema_migrations'),
+  );
+  assert.ok(versionInsert >= 0);
+  assert.equal(versionInsert, db.statements.length - 1);
+  assert.equal(db.isRecorded(), true);
+  assert.equal(db.released(), 1);
+});
+
+test('004 already-applied migration skips without schema changes', async () => {
+  const db = largeJobsMigrationFake({ applied: true });
+
+  const result = await runLargeJobsDispatchMigration(db);
+
+  assert.deepEqual(result, {
+    version: '004_large_jobs_dispatch',
+    status: 'skipped',
+  });
+  assert.equal(db.statements.length, 0);
+  assert.equal(db.released(), 1);
+});
+
+test('004 incompatible users.id fails preflight before schema changes', async () => {
+  const db = largeJobsMigrationFake({ compatibleUserId: false });
+
+  await assert.rejects(
+    () => runLargeJobsDispatchMigration(db),
+    /foreign-key preflight failed/,
+  );
+
+  assert.equal(
+    db.statements.some(sql =>
+      sql.startsWith('ALTER TABLE') || sql.startsWith('CREATE INDEX'),
+    ),
+    false,
+  );
+  assert.equal(
+    db.statements.some(sql => sql.startsWith('INSERT IGNORE INTO schema_migrations')),
+    false,
+  );
+  assert.equal(db.isRecorded(), false);
+  assert.equal(db.released(), 1);
+});
+
+test('004 incompatible bookings collation fails before schema changes', async () => {
+  const db = largeJobsMigrationFake({ compatibleBookingsCollation: false });
+
+  await assert.rejects(
+    () => runLargeJobsDispatchMigration(db),
+    /foreign-key preflight failed/,
+  );
+
+  assert.equal(db.statements.length, 0);
+  assert.equal(db.isRecorded(), false);
+  assert.equal(db.released(), 1);
+});
+
+test('004 creates missing migration tracking table after preflight', async () => {
+  const db = largeJobsMigrationFake({ hasMigrationTable: false });
+
+  const result = await runLargeJobsDispatchMigration(db);
+
+  assert.deepEqual(result, {
+    version: '004_large_jobs_dispatch',
+    status: 'applied',
+  });
+
+  const trackingTableIndex = db.statements.findIndex(
+    sql => sql.startsWith('CREATE TABLE IF NOT EXISTS schema_migrations'),
+  );
+  const firstSchemaChangeIndex = db.statements.findIndex(
+    sql => sql.startsWith('ALTER TABLE bookings ADD COLUMN'),
+  );
+  const versionInsertIndex = db.statements.findIndex(
+    sql => sql.startsWith('INSERT IGNORE INTO schema_migrations'),
+  );
+
+  assert.ok(trackingTableIndex >= 0);
+  assert.ok(firstSchemaChangeIndex > trackingTableIndex);
+  assert.ok(versionInsertIndex > firstSchemaChangeIndex);
+  assert.equal(versionInsertIndex, db.statements.length - 1);
+  assert.equal(db.isRecorded(), true);
+  assert.equal(db.released(), 1);
+});

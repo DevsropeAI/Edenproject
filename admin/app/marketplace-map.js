@@ -36,6 +36,7 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
   const element=useRef(null);const mapRef=useRef(null);const layerRef=useRef(null);const libraryRef=useRef(null);const viewKey=useRef(null);
   const router=useRouter();const [pending,startTransition]=useTransition();
   const [ready,setReady]=useState(false);
+  const [mapAttempt,setMapAttempt]=useState(0);
   const [walking,setWalking]=useState(false);
   const [filters,setFilters]=useState(Object.keys(filterLabels));
   const [query,setQuery]=useState(search);const [selected,setSelected]=useState(null);const [error,setError]=useState('');
@@ -44,17 +45,27 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
   const selectedMarker=[...data.markers,...(data.contractors??[])].find(m=>m.id===selected);
   useEffect(()=>{const timer=setInterval(()=>startTransition(()=>router.refresh()),15000);return()=>clearInterval(timer);},[router]);
   useEffect(()=>{
-    let disposed=false;
-    import('leaflet').then(({default:L})=>{
+    let disposed=false;let map;let observer;
+    setReady(false);setError('');
+    const timeout=setTimeout(()=>{if(!disposed)setError('The map is taking too long to load. Retry the map or refresh this page.');},15000);
+    import('leaflet').then(module=>{
       if(disposed)return;
+      const L=module.default??module;
       libraryRef.current=L;
-      const map=L.map(element.current).setView([20,0],2);
+      map=L.map(element.current).setView([20,0],2);
       mapRef.current=map;layerRef.current=L.layerGroup().addTo(map);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);
+      // Layout can settle after hydration or change when the walking panel opens.
+      // Re-measure the same map rather than replacing its layers or tiles.
+      observer=new ResizeObserver(()=>map.invalidateSize({pan:false}));
+      observer.observe(element.current);
+      map.invalidateSize({pan:false});
+      viewKey.current=null;
+      clearTimeout(timeout);setError('');
       map.on('click',()=>setSelected(null));setReady(true);
     }).catch(()=>{if(!disposed)setError('Map could not load. Refresh to retry.');});
-    return()=>{disposed=true;mapRef.current?.remove();mapRef.current=null;};
-  },[]);
+    return()=>{disposed=true;clearTimeout(timeout);observer?.disconnect();map?.remove();mapRef.current=null;layerRef.current=null;};
+  },[mapAttempt]);
   useEffect(()=>{
     if(!ready||!mapRef.current)return;
     const L=libraryRef.current;const layer=layerRef.current;layer.clearLayers();
@@ -83,7 +94,8 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
     <p className="map-search__hint">Search saved marketplace records. This is not a worldwide address lookup.</p>
     <div className="map-filter-chips" role="group" aria-label="Map layers">{Object.entries(filterLabels).map(([key,label])=><button key={key} type="button" aria-pressed={filters.includes(key)} onClick={()=>{setSelected(null);setFilters(prev=>prev.includes(key)?prev.filter(f=>f!==key):[...prev,key]);}}>{label}</button>)}</div>
     <div className="map-legend" aria-label="Map legend">{['customer','large','contractor','active','completed'].map(kind=><span key={kind}><MarkerSymbol kind={kind} config={data.config}/>{({customer:'Small lead',large:'Large lead',contractor:'Contractor',active:'Active job',completed:'Completed'})[kind]}</span>)}<small>Solid blue: live · Outlined blue: last location / work city</small></div>
-    {error&&<p role="alert" className="map-notice">{error}</p>}
+    {!ready&&!error&&<p role="status" className="map-notice">Loading marketplace map…</p>}
+    {error&&<div role="alert" className="map-notice">{error} <button type="button" className="map-refresh" onClick={()=>setMapAttempt(value=>value+1)}>Retry map</button></div>}
     <div className="map-stage"><div ref={element} className="map-canvas" role="region" aria-label="Marketplace locations"/>{selectedMarker&&<DetailsCard marker={selectedMarker} onClose={()=>setSelected(null)}/>}</div>
     <div className="map-results" role="status">{visible.length} mapped {visible.length===1?'location':'locations'}{query?` matching “${query}”`:''}. <span>Updates every 15 seconds.</span></div>
     {!visible.length&&<p className="map-notice">{query?'No saved locations match this search. Try a city, property name or contractor name.':'No locations match the selected layers.'}</p>}

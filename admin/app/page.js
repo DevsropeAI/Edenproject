@@ -6,9 +6,19 @@ export const dynamic = 'force-dynamic';
 export default async function Page({ searchParams }) {
   try {
     const { section, search, result } = await searchParams;
-    const data = await adminRequest('/dashboard');
-    const mapData=section==='Map'?await adminRequest('/map'):null;
-    return <Dashboard data={data} mapData={mapData}
+    const dashboard = await adminRequest('/dashboard');
+    const data = { Map: [], ...dashboard };
+    let mapData = null;
+    let mapError = false;
+    if (section === 'Map') {
+      try {
+        mapData = await adminRequest('/map');
+      } catch (error) {
+        console.error(error);
+        mapError = true;
+      }
+    }
+    return <Dashboard data={data} mapData={mapData} mapError={mapError}
       section={typeof section === 'string' && Object.hasOwn(data, section) ? section : 'Customers'}
       result={result}
       search={typeof search === 'string' ? search : ''}

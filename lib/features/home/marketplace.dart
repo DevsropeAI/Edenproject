@@ -164,6 +164,8 @@ class Booking {
     this.customerRead = 0,
     this.contractorRead = 0,
     this.scheduledDate,
+    this.dispatchStatus,
+    this.rejectionReason,
   });
 
   final int id;
@@ -188,6 +190,8 @@ class Booking {
   final List<OrderNotice> customerNotices;
   final int customerRead;
   final int contractorRead;
+  final String? dispatchStatus;
+  final String? rejectionReason;
 
   bool hasUnreadMessages(bool contractor) => messages
       .skip(contractor ? contractorRead : customerRead)
@@ -199,6 +203,8 @@ class Booking {
     service: Service.values.byName(json['service'] as String),
     date: DateTime.parse(json['date'] as String).toLocal(),
     scheduledDate: json['scheduledDate'] as String?,
+    dispatchStatus: json['dispatch_status'] as String?,
+    rejectionReason: json['rejection_reason'] as String?,
     total: (json['total'] as num).toDouble(),
     notes: json['notes'] as String,
     status: JobStatus.values.byName(json['status'] as String),
@@ -244,6 +250,8 @@ class Booking {
     service: service,
     date: date,
     scheduledDate: scheduledDate,
+    dispatchStatus: dispatchStatus,
+    rejectionReason: rejectionReason,
     total: total,
     notes: notes,
     recurring: recurring,
@@ -602,3 +610,4 @@ class Bookings extends MarketplaceRecords<Booking> {
     );
   });
 }
+
