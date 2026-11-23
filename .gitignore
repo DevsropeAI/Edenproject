@@ -57,3 +57,5 @@ app.*.map.json
 .env
 .env.*
 !.env.example
+# Brud Code workspace history
+.brud/

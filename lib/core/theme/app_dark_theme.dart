@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
 import 'app_spacing.dart';
 import 'app_typography.dart';
@@ -16,21 +16,32 @@ abstract final class EdenDarkTheme {
       onSurface: EdenDarkColors.text,
       error: EdenDarkColors.error,
     );
+
+    final fontFamily = GoogleFonts.bebasNeue().fontFamily;
+
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: colors,
+      fontFamily: fontFamily,
+      fontFamilyFallback: const ['NotoNastaliqUrdu'],
       textTheme: EdenTypography.textTheme,
       scaffoldBackgroundColor: EdenDarkColors.background,
     );
+
     OutlineInputBorder border(Color color) => OutlineInputBorder(
       borderRadius: BorderRadius.circular(EdenRadius.field),
       borderSide: BorderSide(color: color),
     );
+
     return base.copyWith(
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
         centerTitle: true,
         elevation: 0,
+        titleTextStyle: GoogleFonts.bebasNeue(
+          color: EdenDarkColors.text,
+          fontSize: 22,
+        ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -42,11 +53,12 @@ abstract final class EdenDarkTheme {
         focusedBorder: border(EdenDarkColors.accent),
         errorBorder: border(EdenDarkColors.error),
         focusedErrorBorder: border(EdenDarkColors.error),
-        labelStyle: const TextStyle(color: EdenDarkColors.secondary),
+        labelStyle: GoogleFonts.bebasNeue(color: EdenDarkColors.secondary),
         prefixIconColor: EdenDarkColors.secondary,
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: ButtonStyle(
+          textStyle: WidgetStatePropertyAll(GoogleFonts.bebasNeue(fontSize: 18)),
           minimumSize: const WidgetStatePropertyAll(
             Size(48, EdenSpacing.control),
           ),
@@ -66,16 +78,18 @@ abstract final class EdenDarkTheme {
           minimumSize: const Size(48, EdenSpacing.control),
           side: const BorderSide(color: EdenDarkColors.outline),
           shape: const StadiumBorder(),
+          textStyle: GoogleFonts.bebasNeue(fontSize: 18),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           minimumSize: const Size(48, EdenSpacing.target),
+          textStyle: GoogleFonts.bebasNeue(fontSize: 16),
         ),
       ),
       snackBarTheme: SnackBarThemeData(
         backgroundColor: EdenDarkColors.surface,
-        contentTextStyle: base.textTheme.bodyMedium,
+        contentTextStyle: GoogleFonts.bebasNeue(color: EdenDarkColors.text),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(EdenRadius.field),
@@ -83,6 +97,8 @@ abstract final class EdenDarkTheme {
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: EdenDarkColors.surface,
+        titleTextStyle: GoogleFonts.bebasNeue(fontSize: 22, color: EdenDarkColors.text),
+        contentTextStyle: GoogleFonts.bebasNeue(fontSize: 16, color: EdenDarkColors.text),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(EdenRadius.card),
           side: const BorderSide(color: EdenDarkColors.strongGlass),
@@ -97,6 +113,12 @@ abstract final class EdenDarkTheme {
           ),
         ),
       ),
+      navigationBarTheme: NavigationBarThemeData(
+        labelTextStyle: WidgetStatePropertyAll(
+          GoogleFonts.bebasNeue(fontSize: 14, color: EdenDarkColors.text),
+        ),
+      ),
+      textTheme: EdenTypography.textTheme,
     );
   }
 }

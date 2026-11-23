@@ -4,36 +4,52 @@ import 'app_colors.dart';
 
 class AppTheme {
   static ThemeData get lightTheme {
-    // 1. Use Flutter's standard text theme and apply the Google Font family
-    final textTheme = ThemeData.light().textTheme.apply(
-      fontFamily: GoogleFonts.inter().fontFamily,
-      bodyColor: AppColors.textPrimary,
-      displayColor: AppColors.textPrimary,
-    );
-
     return ThemeData(
       useMaterial3: true,
+      brightness: Brightness.dark,
+      
+      // Apply Inter globally
+      fontFamily: 'Inter',
+      fontFamilyFallback: const ['NotoNastaliqUrdu'],
+      
       colorScheme: ColorScheme.fromSeed(
         seedColor: AppColors.primary,
         primary: AppColors.primary,
         secondary: AppColors.secondary,
         surface: AppColors.surface,
         error: AppColors.error,
+        brightness: Brightness.dark,
       ),
-      textTheme: textTheme,
+      
       scaffoldBackgroundColor: AppColors.background,
-      appBarTheme: const AppBarTheme(
+      
+      textTheme: TextTheme(
+        displayLarge: GoogleFonts.bebasNeue(fontSize: 40, color: AppColors.textPrimary),
+        displayMedium: GoogleFonts.bebasNeue(fontSize: 32, color: AppColors.textPrimary),
+        displaySmall: GoogleFonts.bebasNeue(fontSize: 28, color: AppColors.textPrimary),
+        headlineLarge: GoogleFonts.bebasNeue(fontSize: 24, color: AppColors.textPrimary),
+        headlineMedium: GoogleFonts.bebasNeue(fontSize: 20, color: AppColors.textPrimary),
+        titleLarge: GoogleFonts.bebasNeue(fontSize: 18, color: AppColors.textPrimary),
+        
+        bodyLarge: GoogleFonts.inter(fontSize: 16, color: AppColors.textPrimary),
+        bodyMedium: GoogleFonts.inter(fontSize: 14, color: AppColors.textPrimary),
+        bodySmall: GoogleFonts.inter(fontSize: 12, color: AppColors.textSecondary),
+        
+        labelLarge: GoogleFonts.inter(fontSize: 14, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
+      ),
+      
+      appBarTheme: AppBarTheme(
         backgroundColor: AppColors.surface,
         elevation: 0,
         centerTitle: true,
-        iconTheme: IconThemeData(color: AppColors.textPrimary),
-        titleTextStyle: TextStyle(
+        iconTheme: const IconThemeData(color: AppColors.textPrimary),
+        titleTextStyle: GoogleFonts.bebasNeue(
           color: AppColors.textPrimary,
-          fontSize: 18,
+          fontSize: 24,
           fontWeight: FontWeight.w600,
-          fontFamily: 'Inter', // Explicitly set for AppBar
         ),
       ),
+      
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: AppColors.surface,
@@ -55,15 +71,19 @@ class AppTheme {
           borderSide: const BorderSide(color: AppColors.error),
         ),
       ),
+      
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
-          foregroundColor: Colors.white,
+          foregroundColor: const Color(0xFF111111),
           minimumSize: const Size(double.infinity, 54),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, fontFamily: 'Inter'),
+          textStyle: GoogleFonts.bebasNeue(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );
