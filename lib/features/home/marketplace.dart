@@ -13,20 +13,30 @@ enum Service {
   snow('Snow Removal', 45),
   lawn('Lawn Mowing', 30),
   cleaning('House Cleaning', 85),
-  drivewaySnow('Driveway Snow Clearing',40),
-  walkwayClear('Walkway Clearing',20),
-  entranceClear('Front Entrance Clearing',25),
-  leaf('Leaf Removal',40), tree('Tree Trimming',75),
-  landscaping('Landscaping',80), yard('Yard Cleaning',50),
-  pressure('Pressure Washing',90), gutter('Gutter Cleaning',65),
-  hardscaping('Hardscaping',300), paver('Paver Installation',400),
-  drivewayBuild('Driveway Construction',500), walkwayBuild('Walkway Construction',250),
-  retainingWall('Retaining Wall Installation',450);
+  drivewaySnow('Driveway Snow Clearing', 40),
+  walkwayClear('Walkway Clearing', 20),
+  entranceClear('Front Entrance Clearing', 25),
+  leaf('Leaf Removal', 40),
+  tree('Tree Trimming', 75),
+  landscaping('Landscaping', 80),
+  yard('Yard Cleaning', 50),
+  pressure('Pressure Washing', 90),
+  gutter('Gutter Cleaning', 65),
+  hardscaping('Hardscaping', 300),
+  paver('Paver Installation', 400),
+  drivewayBuild('Driveway Construction', 500),
+  walkwayBuild('Walkway Construction', 250),
+  retainingWall('Retaining Wall Installation', 450);
 
   const Service(this.label, this.price);
   final String label;
   final int price;
-  bool get isSnow => [Service.snow,Service.drivewaySnow,Service.walkwayClear,Service.entranceClear].contains(this);
+  bool get isSnow => [
+    Service.snow,
+    Service.drivewaySnow,
+    Service.walkwayClear,
+    Service.entranceClear,
+  ].contains(this);
 }
 
 enum JobStatus {
@@ -42,6 +52,9 @@ enum JobStatus {
   const JobStatus(this.label);
   final String label;
 }
+
+String serviceDateKey(DateTime date) =>
+    '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
 class Property {
   const Property(
@@ -150,12 +163,16 @@ class Booking {
     this.customerNotices = const [],
     this.customerRead = 0,
     this.contractorRead = 0,
+    this.scheduledDate,
   });
 
   final int id;
   final Property property;
   final Service service;
   final DateTime date;
+  final String? scheduledDate;
+  DateTime get serviceDay =>
+      scheduledDate == null ? date : DateTime.parse(scheduledDate!);
   final double total;
   final String notes;
   final bool recurring;
@@ -181,6 +198,7 @@ class Booking {
     property: Property.fromJson(json['property'] as Map<String, dynamic>),
     service: Service.values.byName(json['service'] as String),
     date: DateTime.parse(json['date'] as String).toLocal(),
+    scheduledDate: json['scheduledDate'] as String?,
     total: (json['total'] as num).toDouble(),
     notes: json['notes'] as String,
     status: JobStatus.values.byName(json['status'] as String),
@@ -225,6 +243,7 @@ class Booking {
     property: property,
     service: service,
     date: date,
+    scheduledDate: scheduledDate,
     total: total,
     notes: notes,
     recurring: recurring,
@@ -281,21 +300,29 @@ final serviceCatalogProvider = FutureProvider.autoDispose<Map<Service, int>>((
   };
 });
 
-final serviceDetailsProvider = FutureProvider.autoDispose<List<Map<String,dynamic>>>((ref) async {
-  final response=await ref.watch(apiClientProvider).get('/services');
-  return (response.data as List).map((row)=>Map<String,dynamic>.from(row as Map)).toList();
+final serviceDetailsProvider =
+    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+      final response = await ref.watch(apiClientProvider).get('/services');
+      return (response.data as List)
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
+    });
+final addOnsProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>((
+  ref,
+) async {
+  final response = await ref.watch(apiClientProvider).get('/add-ons');
+  return (response.data as List)
+      .map((row) => Map<String, dynamic>.from(row as Map))
+      .toList();
 });
-final addOnsProvider = FutureProvider.autoDispose<List<Map<String,dynamic>>>((ref) async {
-  final response=await ref.watch(apiClientProvider).get('/add-ons');
-  return (response.data as List).map((row)=>Map<String,dynamic>.from(row as Map)).toList();
-});
-final quoteProvider = FutureProvider.autoDispose.family<Map<String,dynamic>,String>((ref,key) async {
-  final api=ref.watch(apiClientProvider);
-  await Future<void>.delayed(const Duration(milliseconds:400));
-  if(!ref.mounted)return {};
-  final response=await api.post('/quotes',data:jsonDecode(key));
-  return Map<String,dynamic>.from(response.data as Map);
-});
+final quoteProvider = FutureProvider.autoDispose
+    .family<Map<String, dynamic>, String>((ref, key) async {
+      final api = ref.watch(apiClientProvider);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      if (!ref.mounted) return {};
+      final response = await api.post('/quotes', data: jsonDecode(key));
+      return Map<String, dynamic>.from(response.data as Map);
+    });
 
 final propertiesProvider = NotifierProvider<Properties, List<Property>>(
   Properties.new,
@@ -457,17 +484,19 @@ class Bookings extends MarketplaceRecords<Booking> {
       data: {
         'propertyId': property.id,
         'service': service.name,
-        'date': date.toUtc().toIso8601String(),
+        'scheduledDate': serviceDateKey(date),
+        'utcOffsetMinutes': DateTime.now().timeZoneOffset.inMinutes,
         'notes': notes,
         'recurring': recurring,
         'referencePhoto': _encodeImage(referencePhoto),
         'urgent': urgent,
         'walkway': walkway,
         'discount': discount,
-        if(couponCode!=null)'couponCode':couponCode,
-        if(snowDepth!=null)'snowDepth':snowDepth,
-        'addOnIds':addOnIds,
-        if(expectedTotalCents!=null)'expectedTotalCents':expectedTotalCents,
+        if (couponCode != null) 'couponCode': couponCode,
+        if (snowDepth != null) 'snowDepth': snowDepth,
+        'addOnIds': addOnIds,
+        if (expectedTotalCents != null)
+          'expectedTotalCents': expectedTotalCents,
       },
     );
   });
@@ -527,15 +556,49 @@ class Bookings extends MarketplaceRecords<Booking> {
     await api.post('$path/$id', data: {'action': action});
   });
 
-  Future<bool> editSchedule(int id, DateTime date, String notes) =>
-      saveChange((api) async {
-        await api.post(
+  Future<Map<String, dynamic>> previewBookingEdit(
+    int id,
+    DateTime date,
+    String notes,
+    Map<String, dynamic> measurements,
+    String propertyNotes,
+  ) async {
+    final r = await ref
+        .read(apiClientProvider)
+        .post(
           '$path/$id',
           data: {
-            'action': 'edit',
-            'date': date.toUtc().toIso8601String(),
+            'action': 'previewEdit',
+            'scheduledDate': serviceDateKey(date),
+            'utcOffsetMinutes': DateTime.now().timeZoneOffset.inMinutes,
             'notes': notes,
+            'measurements': measurements,
+            'propertyNotes': propertyNotes,
           },
         );
-      });
+    return Map<String, dynamic>.from(r.data as Map);
+  }
+
+  Future<bool> editSchedule(
+    int id,
+    DateTime date,
+    String notes, {
+    Map<String, dynamic>? measurements,
+    String? propertyNotes,
+    int? expectedTotalCents,
+  }) => saveChange((api) async {
+    await api.post(
+      '$path/$id',
+      data: {
+        'action': 'edit',
+        'scheduledDate': serviceDateKey(date),
+        'utcOffsetMinutes': DateTime.now().timeZoneOffset.inMinutes,
+        'notes': notes,
+        if (measurements != null) 'measurements': measurements,
+        if (propertyNotes != null) 'propertyNotes': propertyNotes,
+        if (expectedTotalCents != null)
+          'expectedTotalCents': expectedTotalCents,
+      },
+    );
+  });
 }

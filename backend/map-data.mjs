@@ -15,7 +15,7 @@ export async function mapData(run,user) {
     markers.push({id:'job-'+row.id,kind,entity:'customer',category:row.service_category??'small',...d.property.pin,
       title:'Booking #'+row.id,detail:d.service+' · '+row.status,status:row.status,bookingId:row.id,
       // Explicit whitelist, never return quote internals or prior assignments.
-      details:{property:d.property,notes:d.notes,date:d.date,total:d.total,status:row.status,service:d.service}});
+      details:{property:d.property,notes:d.notes,date:d.date,scheduledDate:d.scheduledDate,total:d.total,status:row.status,service:d.service}});
   }
   const workers=await run(`SELECT u.id,u.name,u.email,u.phone,u.area,u.service,u.blocked,
       c.name AS city_name,c.state AS city_state,c.country AS city_country,

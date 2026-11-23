@@ -35,6 +35,7 @@ export async function runWeeklyBookings(db, now = Date.now()) {
                 property: snapshot, service: original.service, date: new Date(scheduled).toISOString(),
                 total: Math.round(cents * 1.13) / 100, notes: original.notes,
                 recurring: false, messages: [], review: '',
+                ...(original.scheduledDate?{scheduledDate:new Date(scheduled).toISOString().slice(0,10)}:{}),
               };
               await connection.execute('INSERT INTO bookings (customer_id, details) VALUES (?, ?)', [source.customer_id, JSON.stringify(details)]);
             }

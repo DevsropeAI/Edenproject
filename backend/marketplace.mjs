@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { structuredAddress, propertyMeasurements } from './addresses.mjs';
+import {bookingSchedule} from './booking-schedule.mjs';
 
 
 const transitions = {
@@ -55,7 +56,7 @@ function matchesOffer(details, user) {
 function offerDetails(row) {
   const details = parse(row.details);
   if (row.status !== 'searching' || row.current_property == null) return details;
-  return { ...details, property: { ...parse(row.current_property), id: details.property.id,
+  return { ...details, property: { ...parse(row.current_property),...details.propertyOverrides, id: details.property.id,
     ...(Object.hasOwn(row, 'current_city_id') ? { cityId: row.current_city_id } : {}) } };
 }
 
@@ -209,16 +210,17 @@ export async function marketplace({ method, path, user, run, first, read, addres
       });
       const selected = await first('SELECT * FROM properties WHERE id = ? AND owner = ?', Number(body.propertyId) || 0, user.id);
       if (!selected) error(404, 'Property unavailable.');
-      const date = typeof body.date === 'string' ? Date.parse(body.date) : NaN;
+      const schedule=bookingSchedule(body);
+      const date = Date.parse(schedule.date);
       const catalog = typeof body.service === 'string' && await first('SELECT price_cents FROM services WHERE id = ? AND active = 1', body.service);
-      if (!Number.isFinite(date) || date <= Date.now() || date > Date.now() + 366 * 86400_000 || !catalog) {
+      if (!catalog) {
         error(400, 'Choose a valid future date and an available service.');
       }
       const base = catalog.price_cents + (property(selected).size === 'Large' ? 1500 : 0) + (body.urgent === true ? 2000 : 0) +
         (body.walkway === true && body.service === 'snow' ? 1200 : 0);
       const total = Math.round(base * (body.discount === true ? 0.9 : 1) * 1.13) / 100;
       const details = {
-        property: { ...property(selected), ...(addressStore ? { cityId: selected.city_id } : {}) }, service: body.service, date: new Date(date).toISOString(), total,
+        property: { ...property(selected), ...(addressStore ? { cityId: selected.city_id } : {}) }, service: body.service,...schedule,total,
         notes: text(body.notes, 2000), recurring: body.recurring === true,
         referencePhoto: image(body.referencePhoto), review: '', messages: [],
       };
@@ -232,6 +234,7 @@ export async function marketplace({ method, path, user, run, first, read, addres
   if (method === 'POST' && match) {
     const id = Number(match[1]);
     const body = await read();
+    if(pricing&&['edit','previewEdit'].includes(body.action))return pricing.edit(user,id,body,body.action==='previewEdit');
     const row = await first(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''} FROM bookings b
       ${currentPropertyJoin} WHERE b.id = ?`, id);
     if (!row) error(404, 'Booking unavailable.');
@@ -267,10 +270,14 @@ export async function marketplace({ method, path, user, run, first, read, addres
           break;
         case 'edit': {
           if (!customer || status !== 'searching' || contractor != null) error(409, 'Only unaccepted bookings can be edited.');
-          const date = typeof body.date === 'string' ? Date.parse(body.date) : NaN;
-          if (!Number.isFinite(date) || date <= Date.now() || date > Date.now() + 366 * 86400_000) error(400, 'Choose a valid future date.');
-          details.date = new Date(date).toISOString();
+          Object.assign(details,bookingSchedule(body));
           details.notes = text(body.notes, 2000);
+          if(body.measurements!=null||body.propertyNotes!=null){
+            if(body.measurements!=null&&(typeof body.measurements!=='object'||Array.isArray(body.measurements)))error(400,'Check property measurements.');
+            const overrides={...(details.propertyOverrides??{}),measurements:propertyMeasurements({...details.property.measurements,...body.measurements}),
+              notes:body.propertyNotes==null?details.property.notes:text(body.propertyNotes,1000)};
+            details.property={...details.property,...overrides};details.propertyOverrides=overrides;
+          }
           break;
         }
         case 'cancel':

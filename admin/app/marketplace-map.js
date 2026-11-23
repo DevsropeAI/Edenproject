@@ -16,6 +16,7 @@ function InfoRow({label,children}){return children!=null&&children!==''?<div cla
 function DetailsCard({marker,onClose}) {
   const d=marker.details??{};const worker=marker.entity==='contractor';const p=d.property??{};
   const date=d.date?new Date(d.date):null;
+  const scheduledLabel=d.scheduledDate??(date&&!Number.isNaN(date.getTime())?date.toLocaleString():null);
   return <section className="map-detail" aria-label={`Details for ${marker.title}`}>
     <div className="map-detail__top"><span>{worker?'CONTRACTOR':'BOOKING DETAILS'}</span><button type="button" onClick={onClose} aria-label="Close details"><svg width="18" height="18" viewBox="0 0 20 20" stroke="currentColor" strokeWidth="1.8"><path d="m4 4 12 12M16 4 4 16"/></svg></button></div>
     <h3>{worker?marker.title:p.name||marker.title}</h3>
@@ -23,7 +24,7 @@ function DetailsCard({marker,onClose}) {
     {worker&&<p className="map-detail__hint">{marker.locationSource==='work_city'?'This is the centre of the saved work city, not a live GPS position.':marker.locationSource==='unavailable'?'No saved city coordinates or shared GPS location yet.':marker.locationSource==='last_shared'?'Last shared position. The contractor is not sharing a fresh live update.':'Fresh location shared by the contractor.'}</p>}
     <dl>
       {worker?<><InfoRow label="Work location">{d.workCity}</InfoRow><InfoRow label="Primary service">{d.service}</InfoRow><InfoRow label="Availability">{d.available?'Available for jobs':'Unavailable'}</InfoRow><InfoRow label="Email">{d.email?<a href={`mailto:${d.email}`}>{d.email}</a>:null}</InfoRow><InfoRow label="Phone">{d.phone?<a href={`tel:${d.phone}`}>{d.phone}</a>:null}</InfoRow><InfoRow label="Last shared">{d.lastSharedAt?new Date(d.lastSharedAt).toLocaleString():null}</InfoRow></>
-        :<><InfoRow label="Booking">#{marker.bookingId}</InfoRow><InfoRow label="Service">{d.service?.replace(/([a-z])([A-Z])/g,'$1 $2')}</InfoRow><InfoRow label="Address">{fullAddress(p)}</InfoRow><InfoRow label="Property">{[p.type,p.size].filter(Boolean).join(' · ')}</InfoRow><InfoRow label="Scheduled">{date&&!Number.isNaN(date.getTime())?date.toLocaleString():null}</InfoRow><InfoRow label="Quoted total">{typeof d.total==='number'?new Intl.NumberFormat(undefined,{style:'currency',currency:'CAD'}).format(d.total):null}</InfoRow><InfoRow label="Instructions">{d.notes||p.notes||'No special instructions'}</InfoRow>
+        :<><InfoRow label="Booking">#{marker.bookingId}</InfoRow><InfoRow label="Service">{d.service?.replace(/([a-z])([A-Z])/g,'$1 $2')}</InfoRow><InfoRow label="Address">{fullAddress(p)}</InfoRow><InfoRow label="Property">{[p.type,p.size].filter(Boolean).join(' · ')}</InfoRow><InfoRow label="Scheduled">{scheduledLabel}</InfoRow><InfoRow label="Quoted total">{typeof d.total==='number'?new Intl.NumberFormat(undefined,{style:'currency',currency:'CAD'}).format(d.total):null}</InfoRow><InfoRow label="Instructions">{d.notes||p.notes||'No special instructions'}</InfoRow>
           {p.measurements&&<><InfoRow label="Driveway">{p.measurements.driveway}</InfoRow><InfoRow label="Walkway">{p.measurements.walkway}</InfoRow><InfoRow label="Front yard">{p.measurements.frontYard?'Yes':'No'}</InfoRow><InfoRow label="Backyard">{p.measurements.backyard?'Yes':'No'}</InfoRow></>}
         </>}
     </dl>

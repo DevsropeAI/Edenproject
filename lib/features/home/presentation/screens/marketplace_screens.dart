@@ -50,6 +50,9 @@ const _green = Color(0xFF164D36);
 const _mint = Color(0xFFEAF5ED);
 final _money = NumberFormat.simpleCurrency(name: 'CAD');
 final _date = DateFormat('EEE, MMM d • h:mm a');
+String bookingDateLabel(Booking booking) => booking.scheduledDate == null
+    ? _date.format(booking.date)
+    : DateFormat('EEE, MMM d, yyyy').format(booking.serviceDay);
 
 class CustomerNavigation extends StatelessWidget {
   const CustomerNavigation({super.key, required this.index});
@@ -1074,27 +1077,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       lastDate: now.add(const Duration(days: 365)),
     );
     if (!mounted || day == null) return;
-    final time = await showTimePicker(
-      builder: (_, child) => Theme(data: EdenDarkTheme.data, child: child!),
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(
-        _scheduled ?? now.add(const Duration(hours: 1)),
-      ),
-    );
-    if (!mounted || time == null) return;
-    final selected = DateTime(
-      day.year,
-      day.month,
-      day.day,
-      time.hour,
-      time.minute,
-    );
-    if (selected.isBefore(DateTime.now())) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Choose a future time.')));
-      return;
-    }
-    setState(() => _scheduled = selected);
+    setState(() => _scheduled = DateUtils.dateOnly(day));
   }
 
   @override
@@ -1130,18 +1113,28 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     final service = options.containsKey(_service)
         ? _service
         : options.keys.first;
-    final addons=ref.watch(addOnsProvider);
-    final details=ref.watch(serviceDetailsProvider).value ?? const <Map<String,dynamic>>[];
-    final quoteState=ref.watch(quoteProvider(jsonEncode({
-      'propertyId':property.id,'service':service.name,
-      if(_scheduled!=null)'date':_scheduled!.toUtc().toIso8601String(),
-      'urgent':_urgent,'walkway':service==Service.snow&&_walkway,
-      'couponCode':_coupon.text.trim().toUpperCase(),
-      if(service.isSnow)'snowDepth':_snowDepth,'addOnIds':_addOnIds.toList()..sort(),
-    })));
-    final quote=quoteState.value;
-    final total=((quote?['totalCents'] as num?)??0)/100;
-    final walkwayFee=service==Service.snow&&_walkway?12:0;
+    final addons = ref.watch(addOnsProvider);
+    final details =
+        ref.watch(serviceDetailsProvider).value ??
+        const <Map<String, dynamic>>[];
+    final quoteState = ref.watch(
+      quoteProvider(
+        jsonEncode({
+          'propertyId': property.id,
+          'service': service.name,
+          if (_scheduled != null) 'scheduledDate': serviceDateKey(_scheduled!),
+          'utcOffsetMinutes': DateTime.now().timeZoneOffset.inMinutes,
+          'urgent': _urgent,
+          'walkway': service == Service.snow && _walkway,
+          'couponCode': _coupon.text.trim().toUpperCase(),
+          if (service.isSnow) 'snowDepth': _snowDepth,
+          'addOnIds': _addOnIds.toList()..sort(),
+        }),
+      ),
+    );
+    final quote = quoteState.value;
+    final total = ((quote?['totalCents'] as num?) ?? 0) / 100;
+    final walkwayFee = service == Service.snow && _walkway ? 12 : 0;
     return MarketPage(
       dark: true,
       title: 'Book a service',
@@ -1159,18 +1152,27 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               decoration: const InputDecoration(labelText: 'Service'),
               items: [
                 for (final service in options.keys)
-                  DropdownMenuItem(value: service, child: Text('${service.label}${details.where((row)=>row['id']==service.name).firstOrNull?['service_category']=='large'?' · Large project':''}',overflow:TextOverflow.ellipsis)),
+                  DropdownMenuItem(
+                    value: service,
+                    child: Text(
+                      '${service.label}${details.where((row) => row['id'] == service.name).firstOrNull?['service_category'] == 'large' ? ' · Large project' : ''}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
               ],
-              isExpanded:true,
-              onChanged: (service) => setState(() { _service = service!; _addOnIds.clear(); }),
+              isExpanded: true,
+              onChanged: (service) => setState(() {
+                _service = service!;
+                _addOnIds.clear();
+              }),
             ),
             OutlinedButton.icon(
               onPressed: _pickSchedule,
               icon: const Icon(Icons.schedule),
               label: Text(
                 _scheduled == null
-                    ? 'Choose date and time'
-                    : _date.format(_scheduled!),
+                    ? 'Choose service date'
+                    : DateFormat('EEE, MMM d, yyyy').format(_scheduled!),
               ),
             ),
             SwitchListTile(
@@ -1192,20 +1194,40 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                 value: _walkway,
                 onChanged: (value) => setState(() => _walkway = value ?? false),
               ),
-            if(service.isSnow) DropdownButtonFormField<String>(
-              initialValue:_snowDepth,decoration:const InputDecoration(labelText:'Snow depth'),
-              items:const [DropdownMenuItem(value:'light',child:Text('Light')),DropdownMenuItem(value:'moderate',child:Text('Moderate')),DropdownMenuItem(value:'heavy',child:Text('Heavy'))],
-              onChanged:(value)=>setState(()=>_snowDepth=value!),
-            ),
-            if(addons.isLoading) const LinearProgressIndicator(),
-            if(addons.hasError) TextButton(onPressed:()=>ref.invalidate(addOnsProvider),child:const Text('Retry loading add-ons')),
-            for(final addon in addons.value??const <Map<String,dynamic>>[])
-              if(addon['service_id']==service.name && addon['id']!='snow-walkway') CheckboxListTile(
-                contentPadding:EdgeInsets.zero,
-                title:Text('${addon['name']} · ${_money.format((addon['price_cents'] as num)/100)} CAD'),
-                value:_addOnIds.contains(addon['id']),
-                onChanged:(selected)=>setState(() {if(selected==true){_addOnIds.add(addon['id'] as String);}else{_addOnIds.remove(addon['id']);}}),
+            if (service.isSnow)
+              DropdownButtonFormField<String>(
+                initialValue: _snowDepth,
+                decoration: const InputDecoration(labelText: 'Snow depth'),
+                items: const [
+                  DropdownMenuItem(value: 'light', child: Text('Light')),
+                  DropdownMenuItem(value: 'moderate', child: Text('Moderate')),
+                  DropdownMenuItem(value: 'heavy', child: Text('Heavy')),
+                ],
+                onChanged: (value) => setState(() => _snowDepth = value!),
               ),
+            if (addons.isLoading) const LinearProgressIndicator(),
+            if (addons.hasError)
+              TextButton(
+                onPressed: () => ref.invalidate(addOnsProvider),
+                child: const Text('Retry loading add-ons'),
+              ),
+            for (final addon in addons.value ?? const <Map<String, dynamic>>[])
+              if (addon['service_id'] == service.name &&
+                  addon['id'] != 'snow-walkway')
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    '${addon['name']} · ${_money.format((addon['price_cents'] as num) / 100)} CAD',
+                  ),
+                  value: _addOnIds.contains(addon['id']),
+                  onChanged: (selected) => setState(() {
+                    if (selected == true) {
+                      _addOnIds.add(addon['id'] as String);
+                    } else {
+                      _addOnIds.remove(addon['id']);
+                    }
+                  }),
+                ),
             TextField(
               controller: _coupon,
               onChanged: (_) => setState(() {}),
@@ -1232,22 +1254,39 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           solid: true,
           children: [
             MarketHeading('Instant quote'),
-            if(quoteState.isLoading)const LinearProgressIndicator(),
-            if(quoteState.hasError)Text(apiError(quoteState.error!)),
-            for(final item in quote?['items'] as List? ?? const [])Text('${item['label']??'Base service'}  ${_money.format((item['amountCents'] as num)/100)}'),
-            if(quote!=null)...[
-              Text('Base service  ${_money.format(options[service]!/100)}'),
-              Text('Promo discount  -${_money.format((quote['discountCents'] as num)/100)}'),
-              Text('${quote['taxName']} (${(quote['taxRateBps'] as num)/100}%)  ${_money.format((quote['taxCents'] as num)/100)}'),
+            if (quoteState.isLoading) const LinearProgressIndicator(),
+            if (quoteState.hasError) Text(apiError(quoteState.error!)),
+            for (final item in quote?['items'] as List? ?? const [])
+              Text(
+                '${item['label'] ?? 'Base service'}  ${_money.format((item['amountCents'] as num) / 100)}',
+              ),
+            if (quote != null) ...[
+              Text('Base service  ${_money.format(options[service]! / 100)}'),
+              Text(
+                'Promo discount  -${_money.format((quote['discountCents'] as num) / 100)}',
+              ),
+              Text(
+                '${quote['taxName']} (${(quote['taxRateBps'] as num) / 100}%)  ${_money.format((quote['taxCents'] as num) / 100)}',
+              ),
             ],
             const Divider(),
             MarketHeading('Total  ${_money.format(total)} CAD'),
-            Text(quote?['paymentTiming']=='at_booking'?'Payment is due at booking.':'Payment is available after the booking is completed.'),
+            Text(
+              quote?['paymentTiming'] == 'at_booking'
+                  ? 'Payment is due at booking.'
+                  : 'Payment is available after the booking is completed.',
+            ),
             FilledButton(
-              onPressed: _scheduled == null || quote==null || quoteState.isLoading || quoteState.hasError
+              onPressed:
+                  _scheduled == null ||
+                      quote == null ||
+                      quoteState.isLoading ||
+                      quoteState.hasError
                   ? null
                   : () async {
-                      if (!_scheduled!.isAfter(DateTime.now())) {
+                      if (_scheduled!.isBefore(
+                        DateUtils.dateOnly(DateTime.now()),
+                      )) {
                         setState(() => _scheduled = null);
                         return;
                       }
@@ -1263,7 +1302,10 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                               Text(property.name),
                               Text(property.fullAddress),
                               PropertyMeasurements(property),
-                              Text(_date.format(_scheduled!)),
+                              Text(
+                                DateFormat('EEE, MMM d, yyyy')
+                                    .format(_scheduled!),
+                              ),
                               const Divider(),
                               Text('Total: ${_money.format(total)} CAD'),
                               const Text('No charge will be made.'),
@@ -1282,7 +1324,9 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                         ),
                       );
                       if (!context.mounted || confirmed != true) return;
-                      if (!_scheduled!.isAfter(DateTime.now())) {
+                      if (_scheduled!.isBefore(
+                        DateUtils.dateOnly(DateTime.now()),
+                      )) {
                         setState(() => _scheduled = null);
                         return;
                       }
@@ -1301,10 +1345,10 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             referencePhoto: _referencePhoto,
                             urgent: _urgent,
                             walkway: _walkway,
-                            couponCode:_coupon.text.trim().toUpperCase(),
-                            snowDepth:service.isSnow?_snowDepth:null,
-                            addOnIds:_addOnIds.toList(),
-                            expectedTotalCents:quote['totalCents'] as int,
+                            couponCode: _coupon.text.trim().toUpperCase(),
+                            snowDepth: service.isSnow ? _snowDepth : null,
+                            addOnIds: _addOnIds.toList(),
+                            expectedTotalCents: quote['totalCents'] as int,
                           );
                       if (placed && context.mounted) context.go('/bookings');
                     },
@@ -1431,7 +1475,7 @@ class BookingListScreen extends ConsumerWidget {
                     MarketHeading(booking.service.label, compact: true),
                     Text(booking.property.fullAddress),
                     Text(
-                      '${_date.format(booking.date)} · ${_money.format(booking.total)} CAD',
+                      '${bookingDateLabel(booking)} · ${_money.format(booking.total)} CAD',
                     ),
                     Wrap(
                       spacing: 12,
@@ -1642,7 +1686,7 @@ class _JobCard extends StatelessWidget {
             const SizedBox(height: EdenSpacing.gap),
             _JobLine(Icons.location_on_outlined, booking.property.fullAddress),
             const SizedBox(height: EdenSpacing.sm),
-            _JobLine(Icons.schedule, _date.format(booking.date)),
+            _JobLine(Icons.calendar_today_outlined, bookingDateLabel(booking)),
             const SizedBox(height: EdenSpacing.gap),
             Wrap(
               spacing: EdenSpacing.gap,
@@ -1815,7 +1859,7 @@ class BookingDetailsScreen extends ConsumerWidget {
               label: booking.status.label,
               status: _bookingStatus(booking.status),
             ),
-            Text(_date.format(booking.date)),
+            Text(bookingDateLabel(booking)),
             Text('${_money.format(booking.total)} CAD'),
             if (booking.recurring) const Text('Weekly service requested'),
             if (booking.property.pin case final pin?)
@@ -2210,12 +2254,41 @@ class _EditBookingDialog extends ConsumerStatefulWidget {
 
 class _EditBookingDialogState extends ConsumerState<_EditBookingDialog> {
   late final _notes = TextEditingController(text: widget.booking.notes);
-  late DateTime _date = widget.booking.date.toLocal();
+  late final _propertyNotes = TextEditingController(
+    text: widget.booking.property.notes,
+  );
+  late final _frontSize = TextEditingController(
+    text:
+        widget.booking.property.measurements['frontYardSize'] as String? ?? '',
+  );
+  late final _backSize = TextEditingController(
+    text: widget.booking.property.measurements['backyardSize'] as String? ?? '',
+  );
+  late String _driveway =
+      widget.booking.property.measurements['driveway'] as String? ?? 'medium';
+  late String _walkway =
+      widget.booking.property.measurements['walkway'] as String? ?? 'none';
+  late bool _frontYard =
+      widget.booking.property.measurements['frontYard'] == true;
+  late bool _backyard =
+      widget.booking.property.measurements['backyard'] == true;
+  late DateTime _date = DateUtils.dateOnly(widget.booking.serviceDay);
+  Map<String, dynamic> get _measurements => {
+    'driveway': _driveway,
+    'walkway': _walkway,
+    'frontYard': _frontYard,
+    'backyard': _backyard,
+    'frontYardSize': _frontSize.text.trim(),
+    'backyardSize': _backSize.text.trim(),
+  };
   bool _busy = false;
   String? _error;
   @override
   void dispose() {
     _notes.dispose();
+    _propertyNotes.dispose();
+    _frontSize.dispose();
+    _backSize.dispose();
     super.dispose();
   }
 
@@ -2228,24 +2301,12 @@ class _EditBookingDialogState extends ConsumerState<_EditBookingDialog> {
       lastDate: now.add(const Duration(days: 365)),
     );
     if (!mounted || day == null) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_date),
-    );
-    if (!mounted || time == null) return;
-    setState(
-      () => _date = DateTime(
-        day.year,
-        day.month,
-        day.day,
-        time.hour,
-        time.minute,
-      ),
-    );
+    setState(() => _date = DateUtils.dateOnly(day));
   }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
+    constraints: const BoxConstraints(maxWidth: EdenSpacing.content),
     title: const Text('Edit booking'),
     content: SingleChildScrollView(
       child: Column(
@@ -2253,12 +2314,77 @@ class _EditBookingDialogState extends ConsumerState<_EditBookingDialog> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text(
-            'Update the schedule and instructions before a contractor accepts. Your quoted price stays the same.',
+            'Edit this job before a contractor accepts. Your saved property is unchanged. Review the updated quote before saving.',
           ),
           const SizedBox(height: EdenSpacing.screen),
           OutlinedButton(
             onPressed: _busy ? null : _schedule,
-            child: Text(DateFormat('MMM d, yyyy · h:mm a').format(_date)),
+            child: Text(DateFormat('MMM d, yyyy').format(_date)),
+          ),
+          const SizedBox(height: EdenSpacing.screen),
+          DropdownButtonFormField<String>(
+            initialValue: _driveway,
+            decoration: const InputDecoration(labelText: 'Driveway size'),
+            items: [
+              for (final size in ['small', 'medium', 'large'])
+                DropdownMenuItem(value: size, child: Text(size)),
+            ],
+            onChanged: _busy
+                ? null
+                : (value) => setState(() => _driveway = value!),
+          ),
+          const SizedBox(height: EdenSpacing.screen),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Front yard'),
+            value: _frontYard,
+            onChanged: _busy
+                ? null
+                : (value) => setState(() => _frontYard = value),
+          ),
+          if (_frontYard)
+            TextField(
+              controller: _frontSize,
+              enabled: !_busy,
+              maxLength: 50,
+              decoration: const InputDecoration(labelText: 'Front yard size'),
+            ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Backyard'),
+            value: _backyard,
+            onChanged: _busy
+                ? null
+                : (value) => setState(() => _backyard = value),
+          ),
+          if (_backyard)
+            TextField(
+              controller: _backSize,
+              enabled: !_busy,
+              maxLength: 50,
+              decoration: const InputDecoration(labelText: 'Backyard size'),
+            ),
+          const SizedBox(height: EdenSpacing.screen),
+          DropdownButtonFormField<String>(
+            initialValue: _walkway,
+            decoration: const InputDecoration(labelText: 'Walkway'),
+            items: [
+              for (final length in ['none', 'short', 'long'])
+                DropdownMenuItem(value: length, child: Text(length)),
+            ],
+            onChanged: _busy
+                ? null
+                : (value) => setState(() => _walkway = value!),
+          ),
+          const SizedBox(height: EdenSpacing.screen),
+          TextField(
+            controller: _propertyNotes,
+            enabled: !_busy,
+            maxLength: 1000,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              labelText: 'Property / access instructions',
+            ),
           ),
           const SizedBox(height: EdenSpacing.screen),
           TextField(
@@ -2283,28 +2409,86 @@ class _EditBookingDialogState extends ConsumerState<_EditBookingDialog> {
         onPressed: _busy
             ? null
             : () async {
-                if (!_date.isAfter(DateTime.now())) {
-                  setState(() => _error = 'Choose a future date and time.');
+                if (_date.isBefore(DateUtils.dateOnly(DateTime.now()))) {
+                  setState(
+                    () => _error = 'Choose today or a future service date.',
+                  );
                   return;
                 }
                 setState(() {
                   _busy = true;
                   _error = null;
                 });
-                final saved = await ref
-                    .read(bookingsProvider.notifier)
-                    .editSchedule(widget.booking.id, _date, _notes.text);
-                if (!mounted || !context.mounted) return;
-                if (saved) {
-                  Navigator.pop(context);
-                } else {
-                  setState(() {
-                    _busy = false;
-                    _error = 'Could not save. The booking may have been accepted. Close and refresh before trying again.';
-                  });
+                try {
+                  final notifier = ref.read(bookingsProvider.notifier);
+                  final preview = await notifier.previewBookingEdit(
+                    widget.booking.id,
+                    _date,
+                    _notes.text,
+                    _measurements,
+                    _propertyNotes.text,
+                  );
+                  if (!mounted || !context.mounted) return;
+                  final total = (preview['totalCents'] as num) / 100;
+                  final confirmed = await showCustomerDialog<bool>(
+                    context: context,
+                    dark: true,
+                    builder: (dialog) => AlertDialog(
+                      title: const Text('Review booking changes'),
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(DateFormat('MMM d, yyyy').format(_date)),
+                          for (final item
+                              in preview['breakdown']?['items'] as List? ??
+                                  const [])
+                            Text(
+                              '${item['label']}: ${_money.format((item['amountCents'] as num) / 100)}',
+                            ),
+                          Text('Updated total: ${_money.format(total)} CAD'),
+                        ],
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialog, false),
+                          child: const Text('Back'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(dialog, true),
+                          child: const Text('Confirm changes'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (!mounted || !context.mounted) return;
+                  if (confirmed != true) {
+                    setState(() => _busy = false);
+                    return;
+                  }
+                  final saved = await notifier.editSchedule(
+                    widget.booking.id,
+                    _date,
+                    _notes.text,
+                    measurements: _measurements,
+                    propertyNotes: _propertyNotes.text,
+                    expectedTotalCents: preview['totalCents'] as int,
+                  );
+                  if (!mounted || !context.mounted) return;
+                  if (saved) {
+                    Navigator.pop(context);
+                  } else {
+                    setState(
+                      () => _error = 'Could not save. Refresh the booking; it may have been accepted.',
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) setState(() => _error = apiError(e));
+                } finally {
+                  if (mounted) setState(() => _busy = false);
                 }
               },
-        child: const Text('Save changes'),
+        child: const Text('Review changes'),
       ),
     ],
   );
