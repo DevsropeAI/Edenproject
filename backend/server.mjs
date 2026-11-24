@@ -30,10 +30,10 @@ function credentials(body, registering = false) {
   return { email, password };
 }
 
-function contractorDetails(body) {
+function contractorDetails(body, allowedServices = services) {
   const area = field(body, 'area', 150);
   const service = field(body, 'service', 80);
-  if (!services.includes(service)) fail(400, 'Choose a supported primary service.');
+  if (!allowedServices.some(value => value.toLowerCase() === service.toLowerCase())) fail(400, 'Choose a supported primary service.');
   return { area, service };
 }
 
@@ -150,18 +150,18 @@ export function createApi({
       return { changed: true };
     }
     if (method === 'GET' && path === '/api/auth/options') {
-      return { phoneVerification: Boolean(phoneVerification) };
+      return { phoneVerification: Boolean(phoneVerification), contractorOfferDetails: true, contractorRegistrationServices: Boolean(pricing) };
     }
     if (method === 'GET' && path === '/api/auth/work-city-options') {
       limitAuth(req, 'city');
       return geocoding.capabilities;
     }
-    if (method === 'GET' && ['/api/auth/work-city-search', '/api/auth/work-city-autocomplete'].includes(path)) {
+    if (method === 'GET' && ['/api/auth/work-city-search', '/api/auth/work-city-autocomplete', '/api/auth/work-city-place'].includes(path)) {
       limitAuth(req, 'city');
       const params = new URL(req.url, 'http://localhost').searchParams;
       params.set('type', 'city');
       return geocoding.lookup(
-        path.endsWith('autocomplete') ? 'autocomplete' : 'search',
+        path.endsWith('autocomplete') ? 'autocomplete' : path.endsWith('place') ? 'place' : 'search',
         params, 'registration:' + digest(req.socket.remoteAddress ?? 'unknown'),
       );
     }
@@ -182,7 +182,13 @@ export function createApi({
       const name = field(body, 'name', 100);
       const phone = field(body, 'phone', 35);
       if (phone.replace(/\D/g, '').length < 7) fail(400, 'Enter a valid phone number.');
-      const { area, service } = role === 'contractor' ? contractorDetails(body) : { area: '', service: '' };
+      const catalog = role === 'contractor' && pricing ? await run('SELECT id, title FROM services WHERE active = 1 ORDER BY title') : null;
+      const { area, service } = role === 'contractor' ? contractorDetails(body, catalog?.map(row => row.title) ?? services) : { area: '', service: '' };
+      const serviceIds = body.serviceIds ?? [];
+      if (!Array.isArray(serviceIds) || serviceIds.length > 50 || serviceIds.some(id => typeof id !== 'string' || !id.length || id.length > 20) || new Set(serviceIds).size !== serviceIds.length) fail(400, 'Choose valid additional services.');
+      if (serviceIds.length && role !== 'contractor') fail(400, 'Additional services are for contractor accounts.');
+      if (serviceIds.length && !pricing) fail(503, 'Additional services are awaiting the services database update.');
+      if (serviceIds.some(id => !catalog?.some(row => row.id === id))) fail(400, 'A selected service is unavailable.');
       if (body.workCity != null && role !== 'contractor') fail(400, 'Work city is for contractor accounts.');
       if (body.workCity != null && !addressStore) fail(503, 'City selection is awaiting the database update. Enter the service area manually.');
       if (phoneVerification) {
@@ -192,18 +198,27 @@ export function createApi({
         }
       }
       try {
-        if (body.workCity != null) {
+        if (body.workCity != null || serviceIds.length) {
           const connection = await db.getConnection();
           try {
             await connection.beginTransaction();
             const transactionRun = async (sql, ...args) => (await connection.execute(sql, args))[0];
             const transactionFirst = async (sql, ...args) => (await transactionRun(sql, ...args))[0];
-            const cityId = await createAddressStore(transactionRun, transactionFirst).city(body.workCity);
-            await transactionRun(`
+            const cityId = body.workCity != null ? await createAddressStore(transactionRun, transactionFirst).city(body.workCity) : null;
+            for (const id of [...serviceIds].sort()) {
+              if (!await transactionFirst('SELECT id FROM services WHERE id = ? AND active = 1 FOR UPDATE', id)) fail(400, 'A selected service is unavailable.');
+            }
+            const userId = token();
+            if (body.workCity != null) await transactionRun(`
               INSERT INTO users (id, email, password, name, phone, role, customer, contractor, area, service, city_id)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, token(), email, hashPassword(password), name, phone, role,
+            `, userId, email, hashPassword(password), name, phone, role,
             Number(role === 'customer'), Number(role === 'contractor'), area, service, cityId);
+            else await transactionRun(`
+              INSERT INTO users (id, email, password, name, phone, role, customer, contractor, area, service)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, userId, email, hashPassword(password), name, phone, role, Number(role === 'customer'), Number(role === 'contractor'), area, service);
+            for (const id of serviceIds) await transactionRun('INSERT INTO contractor_services (user_id, service_id) VALUES (?, ?)', userId, id);
             await connection.commit();
           } catch (error) {
             await connection.rollback();
@@ -430,7 +445,7 @@ export function createApi({
         ...geocoding.capabilities, structuredAddresses,
       };
       const kind = path.slice('/api/geo/'.length);
-      if (!['search', 'autocomplete', 'reverse'].includes(kind)) fail(404, 'Endpoint not found.');
+      if (!['search', 'autocomplete', 'reverse', 'place'].includes(kind)) fail(404, 'Endpoint not found.');
       return geocoding.lookup(kind, new URL(req.url, 'http://localhost').searchParams, user.id);
     }
     if (method === 'GET' && path === '/api/contractor/work-location') {

@@ -2,7 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' as google;
 import 'package:latlong2/latlong.dart';
+
+import '../../../../core/maps/google_maps_loader.dart';
 
 class PropertyMap extends StatefulWidget {
   const PropertyMap({
@@ -22,6 +25,8 @@ class PropertyMap extends StatefulWidget {
 class _PropertyMapState extends State<PropertyMap> {
   late LatLng _pin = widget.initial;
   final _controller = MapController();
+  google.GoogleMapController? _googleController;
+  late Future<void> _googleReady = loadGoogleMaps();
   bool _ready = false;
   late bool _hasPin = !widget.locateOnOpen;
   bool _locating = false;
@@ -52,7 +57,7 @@ class _PropertyMapState extends State<PropertyMap> {
         _pin = LatLng(position.latitude, position.longitude);
         _hasPin = true;
       });
-      if (_ready) _controller.move(_pin, 16);
+      if (_ready) _moveCamera(_pin, 16);
     } catch (_) {
       if (mounted && selection == _selection) {
         setState(() {
@@ -64,13 +69,53 @@ class _PropertyMapState extends State<PropertyMap> {
     }
   }
 
+  void _moveCamera(LatLng point, double zoom) {
+    if (kIsWeb) {
+      _googleController?.animateCamera(
+        google.CameraUpdate.newLatLngZoom(
+          google.LatLng(point.latitude, point.longitude),
+          zoom,
+        ),
+      );
+    } else {
+      _controller.move(point, zoom);
+    }
+  }
+
+  void _onMapReady() {
+    _ready = true;
+    if (widget.locateOnOpen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_hasPin) _locate();
+      });
+    }
+  }
+
+  void _selectPin(LatLng point) => setState(() {
+    _selection++;
+    _pin = point;
+    _hasPin = true;
+    _locationError = null;
+  });
+
   @override
   void didUpdateWidget(covariant PropertyMap oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!widget.editable && oldWidget.initial != widget.initial) {
       _pin = widget.initial;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _ready) _controller.move(_pin, _controller.camera.zoom);
+        if (mounted && _ready) {
+          // GPS updates preserve the user's current zoom level.
+          if (kIsWeb) {
+            _googleController?.animateCamera(
+              google.CameraUpdate.newLatLng(
+                google.LatLng(_pin.latitude, _pin.longitude),
+              ),
+            );
+          } else {
+            _controller.move(_pin, _controller.camera.zoom);
+          }
+        }
       });
     }
   }
@@ -78,6 +123,8 @@ class _PropertyMapState extends State<PropertyMap> {
   @override
   void dispose() {
     _controller.dispose();
+    // GoogleMap owns and disposes its controller when the platform view closes.
+    _googleController = null;
     super.dispose();
   }
 
@@ -87,58 +134,49 @@ class _PropertyMapState extends State<PropertyMap> {
     children: [
       SizedBox(
         height: 280,
-        child: FlutterMap(
-          mapController: _controller,
-          options: MapOptions(
-            onMapReady: () {
-              _ready = true;
-              if (widget.locateOnOpen) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted && !_hasPin) _locate();
-                });
-              }
-            },
-            initialCenter: _pin,
-            initialZoom: 14,
-            maxZoom: 19,
-            onTap: widget.editable
-                ? (_, point) => setState(() {
-                    _selection++;
-                    _pin = point;
-                    _hasPin = true;
-                    _locationError = null;
-                  })
-                : null,
-          ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.example.eden_frontend',
-            ),
-            MarkerLayer(
-              markers: [
-                if (_hasPin)
-                  Marker(
-                    point: _pin,
-                    width: 44,
-                    height: 44,
-                    child: Icon(
-                      Icons.location_on,
-                      color: Theme.of(context).colorScheme.primary,
-                      size: 38,
+        child: kIsWeb
+            ? _googleMap()
+            : FlutterMap(
+                mapController: _controller,
+                options: MapOptions(
+                  onMapReady: _onMapReady,
+                  initialCenter: _pin,
+                  initialZoom: 14,
+                  maxZoom: 19,
+                  onTap: widget.editable
+                      ? (_, point) => _selectPin(point)
+                      : null,
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.example.eden_frontend',
+                  ),
+                  MarkerLayer(
+                    markers: [
+                      if (_hasPin)
+                        Marker(
+                          point: _pin,
+                          width: 44,
+                          height: 44,
+                          child: Icon(
+                            Icons.location_on,
+                            color: Theme.of(context).colorScheme.primary,
+                            size: 38,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const Align(
+                    alignment: Alignment.bottomRight,
+                    child: ColoredBox(
+                      color: Colors.white,
+                      child: Text(' © OpenStreetMap contributors '),
                     ),
                   ),
-              ],
-            ),
-            const Align(
-              alignment: Alignment.bottomRight,
-              child: ColoredBox(
-                color: Colors.white,
-                child: Text(' © OpenStreetMap contributors '),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
       if (widget.editable) ...[
         const SizedBox(height: 8),
@@ -157,5 +195,62 @@ class _PropertyMapState extends State<PropertyMap> {
         ),
       ],
     ],
+  );
+
+  Widget _googleMap() => FutureBuilder<void>(
+    future: _googleReady,
+    builder: (context, snapshot) {
+      if (snapshot.hasError) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Google Maps could not load. Check the internet connection and Maps configuration. You can still enter the address manually.',
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  onPressed: () =>
+                      setState(() => _googleReady = loadGoogleMaps()),
+                  child: const Text('Retry map'),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      if (snapshot.connectionState != ConnectionState.done) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return google.GoogleMap(
+        initialCameraPosition: google.CameraPosition(
+          target: google.LatLng(_pin.latitude, _pin.longitude),
+          zoom: 14,
+        ),
+        minMaxZoomPreference: const google.MinMaxZoomPreference(null, 19),
+        onMapCreated: (controller) {
+          _googleController = controller;
+          _onMapReady();
+        },
+        onTap: widget.editable
+            ? (point) => _selectPin(LatLng(point.latitude, point.longitude))
+            : null,
+        markers: {
+          if (_hasPin)
+            google.Marker(
+              markerId: const google.MarkerId('property'),
+              position: google.LatLng(_pin.latitude, _pin.longitude),
+              infoWindow: google.InfoWindow(
+                title: widget.editable ? 'Selected location' : 'Location',
+              ),
+            ),
+        },
+        myLocationButtonEnabled: false,
+        mapToolbarEnabled: false,
+        zoomControlsEnabled: true,
+      );
+    },
   );
 }

@@ -2,7 +2,8 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { filterLabels, fullAddress, matchesSearch, statusLabel, visibleMarker } from './map-utils.mjs';
-import 'leaflet/dist/leaflet.css';
+import { loadGoogleMaps } from './google-map-sdk.mjs';
+import { googleMapAdapter } from './google-map-adapter.mjs';
 import WalkingRoutes from './walking-routes';
 
 function SearchIcon(){return <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>;}
@@ -32,7 +33,7 @@ function DetailsCard({marker,onClose}) {
   </section>;
 }
 
-export default function MarketplaceMap({ data, search='', contractors:walkingContractors=[] }) {
+export default function MarketplaceMap({ data, search='', contractors:walkingContractors=[], mapKey, mapId }) {
   const element=useRef(null);const mapRef=useRef(null);const layerRef=useRef(null);const libraryRef=useRef(null);const viewKey=useRef(null);
   const router=useRouter();const [pending,startTransition]=useTransition();
   const [ready,setReady]=useState(false);
@@ -48,13 +49,12 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
     let disposed=false;let map;let observer;
     setReady(false);setError('');
     const timeout=setTimeout(()=>{if(!disposed)setError('The map is taking too long to load. Retry the map or refresh this page.');},15000);
-    import('leaflet').then(module=>{
+    loadGoogleMaps(mapKey).then(g=>{
       if(disposed)return;
-      const L=module.default??module;
+      const {map:createdMap,api:L}=googleMapAdapter(g,element.current,mapId);
       libraryRef.current=L;
-      map=L.map(element.current).setView([20,0],2);
+      map=createdMap;
       mapRef.current=map;layerRef.current=L.layerGroup().addTo(map);
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);
       // Layout can settle after hydration or change when the walking panel opens.
       // Re-measure the same map rather than replacing its layers or tiles.
       observer=new ResizeObserver(()=>map.invalidateSize({pan:false}));
@@ -65,7 +65,7 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
       map.on('click',()=>setSelected(null));setReady(true);
     }).catch(()=>{if(!disposed)setError('Map could not load. Refresh to retry.');});
     return()=>{disposed=true;clearTimeout(timeout);observer?.disconnect();map?.remove();mapRef.current=null;layerRef.current=null;};
-  },[mapAttempt]);
+  },[mapAttempt,mapKey,mapId]);
   useEffect(()=>{
     if(!ready||!mapRef.current)return;
     const L=libraryRef.current;const layer=layerRef.current;layer.clearLayers();

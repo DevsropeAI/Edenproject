@@ -57,5 +57,7 @@ app.*.map.json
 .env
 .env.*
 !.env.example
+# Generated browser-only Google Maps key; created by the setup script.
+/web/google_maps_config.js
 # Brud Code workspace history
 .brud/

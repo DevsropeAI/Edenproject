@@ -166,6 +166,7 @@ class Booking {
     this.scheduledDate,
     this.dispatchStatus,
     this.rejectionReason,
+    this.serviceCategory = 'small',
   });
 
   final int id;
@@ -192,6 +193,7 @@ class Booking {
   final int contractorRead;
   final String? dispatchStatus;
   final String? rejectionReason;
+  final String serviceCategory;
 
   bool hasUnreadMessages(bool contractor) => messages
       .skip(contractor ? contractorRead : customerRead)
@@ -205,6 +207,7 @@ class Booking {
     scheduledDate: json['scheduledDate'] as String?,
     dispatchStatus: json['dispatch_status'] as String?,
     rejectionReason: json['rejection_reason'] as String?,
+    serviceCategory: json['service_category'] as String? ?? 'small',
     total: (json['total'] as num).toDouble(),
     notes: json['notes'] as String,
     status: JobStatus.values.byName(json['status'] as String),
@@ -252,6 +255,7 @@ class Booking {
     scheduledDate: scheduledDate,
     dispatchStatus: dispatchStatus,
     rejectionReason: rejectionReason,
+    serviceCategory: serviceCategory,
     total: total,
     notes: notes,
     recurring: recurring,
@@ -610,4 +614,3 @@ class Bookings extends MarketplaceRecords<Booking> {
     );
   });
 }
-

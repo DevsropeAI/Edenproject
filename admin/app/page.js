@@ -19,6 +19,7 @@ export default async function Page({ searchParams }) {
       }
     }
     return <Dashboard data={data} mapData={mapData} mapError={mapError}
+      mapKey={process.env.EDEN_GOOGLE_MAPS_WEB_KEY} mapId={process.env.EDEN_GOOGLE_MAPS_MAP_ID}
       section={typeof section === 'string' && Object.hasOwn(data, section) ? section : 'Customers'}
       result={result}
       search={typeof search === 'string' ? search : ''}

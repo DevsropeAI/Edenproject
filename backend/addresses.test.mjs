@@ -17,19 +17,22 @@ const details = {
   },
 };
 
-test('unaccepted contractor receives only the existing property whitelist', async () => {
+test('eligible unaccepted contractor receives approved location, instructions and measurements but no photos', async () => {
   const offers = await marketplace({
     method: 'GET', path: '/api/bookings', user: contractor, addressStore: {},
     run: async () => [{ id: 10, status: 'searching', version: 0, contractor_id: null, details }],
   });
   assert.equal(offers.length, 1);
   const property = offers[0].property;
-  assert.deepEqual(Object.keys(property).sort(), ['id', 'name', 'address', 'type', 'size', 'notes', 'photo', 'pin'].sort());
+  assert.deepEqual(Object.keys(property).sort(), ['id', 'name', 'address', 'type', 'size', 'notes', 'photo', 'pin', 'measurements'].sort());
   assert.equal(property.photo, null);
-  assert.equal(property.pin, null);
-  assert.equal(property.notes, '');
+  assert.deepEqual(property.pin, details.property.pin);
+  assert.equal(property.address, details.property.address);
+  assert.equal(property.notes, details.property.notes);
+  assert.equal(offers[0].notes, details.notes);
+  assert.deepEqual(property.measurements, details.property.measurements);
   assert.equal(offers[0].referencePhoto, null);
-  for (const secret of ['street', 'postalCode', 'measurements', 'structuredAddress', 'cityId', 'latitude', 'longitude']) {
+  for (const secret of ['street', 'postalCode', 'structuredAddress', 'cityId']) {
     assert.equal(JSON.stringify(offers).includes('"' + secret + '"'), false);
   }
 });
@@ -46,6 +49,26 @@ test('matching uses both city IDs instead of legacy area and rejects a different
     ...request, user: { ...contractor, area: 'Lahore' },
     run: async () => [{ id: 10, status: 'searching', contractor_id: null, details: legacyDetails }],
   })).length, 1);
+});
+
+test('exact locations remain restricted to eligible offers and the admin-assigned contractor', async () => {
+  const rows = [
+    { id: 1, dispatch_status: 'pending_admin' },
+    { id: 2, dispatch_status: 'assigned', assigned_contractor_id: 'someone-else' },
+    { id: 3, dispatch_status: 'assigned', assigned_contractor_id: contractor.id },
+    { id: 4, dispatch_status: 'open' },
+    { id: 5, dispatch_status: 'open', customer_id: contractor.id },
+  ].map(row => ({ status: 'searching', contractor_id: null, details: { ...details, propertyOverrides: { notes: 'Private gate' } }, ...row }));
+  const offers = await marketplace({
+    method: 'GET', path: '/api/bookings', user: contractor, addressStore: {}, run: async () => rows,
+  });
+  assert.deepEqual(offers.map(row => row.id), [3, 4]);
+  for (const offer of offers) {
+    assert.deepEqual(offer.property.pin, details.property.pin);
+    assert.equal(offer.property.photo, null);
+    assert.equal(offer.notes, details.notes);
+    assert.equal(offer.propertyOverrides, undefined);
+  }
 });
 
 test('customer and accepted contractor retain full property information', async () => {

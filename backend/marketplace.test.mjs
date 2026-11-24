@@ -33,7 +33,7 @@ test('booking creation calculates the server price and uses the customer propert
   assert.equal(result.status, 'searching');
 });
 
-test('unassigned jobs hide exact address and access instructions', async () => {
+test('eligible unassigned jobs reveal approved address and instructions while photos remain hidden', async () => {
   const [offer] = await marketplace({
     method: 'GET', path: '/api/bookings', user: contractor,
     run: async () => [{
@@ -44,8 +44,9 @@ test('unassigned jobs hide exact address and access instructions', async () => {
       details: { ...offerDetails, service: 'cleaning' },
     }],
   });
-  assert.equal(offer.property.address.trim(), 'toronto');
-  assert.equal(offer.property.notes, '');
+  assert.equal(offer.property.address, offerDetails.property.address);
+  assert.equal(offer.property.notes, property.details.notes);
+  assert.equal(offer.notes, offerDetails.notes);
   assert.equal(offer.referencePhoto, null);
 });
 
@@ -76,6 +77,16 @@ test('an available contractor cannot accept a job outside their city', async () 
       : undefined,
     run: async () => assert.fail('ineligible offer was updated'),
   }), error => error.status === 404);
+});
+
+test('catalog primary-service capitalization and additional services both match within the saved area', async () => {
+  const rows = ['snow', 'tree'].map((service, index) => ({
+    id: index + 1, status: 'searching', contractor_id: null, details: { ...offerDetails, service },
+  }));
+  const user = { ...contractor, service: 'Snow Removal', additionalServices: ['tree'] };
+  const offers = await marketplace({ method: 'GET', path: '/api/bookings', user, run: async () => rows });
+  assert.deepEqual(offers.map(row => row.service), ['snow', 'tree']);
+  assert.deepEqual(await marketplace({ method: 'GET', path: '/api/bookings', user: { ...user, area: 'Ottawa' }, run: async () => rows }), []);
 });
 
 test('releasing an accepted job reopens it and removes prior chat from the next offer', async () => {
@@ -134,7 +145,7 @@ test('a property address corrected after booking is used to match an open job', 
     run: async () => [row],
   });
   assert.equal(offers[0].id, row.id);
-  assert.equal(offers[0].property.address.trim(), 'toronto');
+  assert.equal(offers[0].property.address, row.current_property.address);
 });
 
 test('chat read positions are persisted per role without marking later messages read', async () => {

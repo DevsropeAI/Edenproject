@@ -38,9 +38,9 @@ export function image(value) {
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
 const property = row => ({ ...parse(row.details), id: row.id });
 const primaryServiceIds = new Map([
-  ['Snow removal', 'snow'],
-  ['Lawn mowing', 'lawn'],
-  ['House cleaning', 'cleaning'],
+  ['snow removal', 'snow'],
+  ['lawn mowing', 'lawn'],
+  ['house cleaning', 'cleaning'],
 ]);
 
 function matchesOffer(details, user) {
@@ -49,7 +49,7 @@ function matchesOffer(details, user) {
     : details.property?.address?.split(',')[1]?.trim().toLowerCase() === user.area?.trim().toLowerCase();
   const city = details.property?.address?.split(',')[1]?.trim().toLowerCase();
   return Boolean(sameCity && (details.property?.cityId != null || city) &&
-    (details.service === primaryServiceIds.get(user.service) || user.additionalServices?.includes(details.service)) &&
+    (details.service === primaryServiceIds.get(user.service?.toLowerCase()) || user.additionalServices?.includes(details.service)) &&
     !details.releasedBy?.includes(user.id));
 }
 
@@ -191,14 +191,18 @@ export async function marketplace({ method, path, user, run, first, read, addres
           SELECT 1 FROM declined_jobs d WHERE d.booking_id = b.id AND d.contractor_id = ?))
         ORDER BY b.id DESC`, user.id, user.id, user.id, user.id, user.id);
       return records.filter(row => row.contractor_id === user.id || (row.dispatch_status === 'assigned' && row.assigned_contractor_id === user.id) ||
-        matchesOffer(offerDetails(row), user)).map(row => {
+        (row.status === 'searching' && row.customer_id !== user.id && (row.dispatch_status ?? 'open') === 'open' && matchesOffer(offerDetails(row), user))).map(row => {
         const job = booking({ ...row, details: offerDetails(row) }, user);
         if (row.contractor_id !== user.id) {
           const location = job.property;
-          job.property = { id: location.id, name: 'Service property', address: user.area,
-            type: location.type, size: location.size, notes: '', photo: null, pin: null };
-          job.notes = '';
+          // Eligible offers now reveal their location before acceptance, as approved.
+          // Job instructions and service measurements are visible for evaluating the offer.
+          // Photos and unrelated structured address metadata remain private.
+          job.property = { id: location.id, name: 'Service property', address: location.address,
+            type: location.type, size: location.size, notes: location.notes ?? '', photo: null, pin: location.pin ?? null,
+            measurements: location.measurements ?? {} };
           job.referencePhoto = null;
+          delete job.propertyOverrides;
         }
         return job;
       });

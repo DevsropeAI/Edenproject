@@ -72,6 +72,25 @@ test('registration city lookup works before sign-in while general geocoding stay
   assert.equal((await request(null, '/api/geo/reverse?lat=31&lng=74')).status, 401);
 });
 
+test('place details require login except for the city-only registration route', async () => {
+  assert.equal((await request(null, '/api/geo/place?placeId=ChIJTest')).status, 401);
+  const calls = [];
+  const geocoding = {
+    capabilities: { autocomplete: true },
+    lookup: async (kind, params) => {
+      calls.push({ kind, type: params.get('type') });
+      return { city: 'Lahore', country: 'Pakistan', latitude: 31.5, longitude: 74.3 };
+    },
+  };
+  const registration = await request(null, '/api/auth/work-city-place?placeId=ChIJTest&type=address', 'GET', {}, { geocoding });
+  assert.equal(registration.status, 200);
+  assert.deepEqual(calls[0], { kind: 'place', type: 'city' });
+  const customer = await request({ id: 'owner', role: 'customer' }, '/api/geo/place?placeId=ChIJTest', 'GET', {}, { geocoding });
+  assert.equal(customer.status, 200);
+  assert.equal(customer.body.city, 'Lahore');
+  assert.equal((await request({ id: 'other', role: 'other' }, '/api/geo/place?placeId=ChIJTest', 'GET', {}, { geocoding })).status, 403);
+});
+
 test('work city writes enforce contractor role and migration readiness', async () => {
   assert.equal((await request({ id: 'owner', role: 'customer' }, '/api/contractor/work-location', 'POST')).status, 403);
   assert.equal((await request({ id: 'worker', role: 'contractor' }, '/api/contractor/work-location', 'POST')).status, 503);

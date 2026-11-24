@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -50,6 +51,18 @@ class AddressSearchField extends ConsumerStatefulWidget {
 }
 
 class _AddressSearchFieldState extends ConsumerState<AddressSearchField> {
+  static String _newSessionToken() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+  }
+
+  String _sessionToken = _newSessionToken();
   Timer? _debounce;
   int _generation = 0;
   bool _loading = false;
@@ -89,6 +102,7 @@ class _AddressSearchFieldState extends ConsumerState<AddressSearchField> {
                 : (autocomplete ? '/geo/autocomplete' : '/geo/search'),
             queryParameters: {
               'q': query,
+              'sessionToken': _sessionToken,
               if (widget.citiesOnly) 'type': 'city',
             },
           );
@@ -99,11 +113,50 @@ class _AddressSearchFieldState extends ConsumerState<AddressSearchField> {
             .toList(),
       );
     } catch (error) {
-      if (mounted && generation == _generation)
+      if (mounted && generation == _generation) {
         setState(() => _message = apiError(error));
+      }
     } finally {
-      if (mounted && generation == _generation)
+      if (mounted && generation == _generation) {
         setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _select(Map<String, dynamic> result) async {
+    _debounce?.cancel();
+    final generation = ++_generation;
+    setState(() {
+      _results = null;
+      _message = null;
+      _loading = result['needsDetails'] == true;
+    });
+    try {
+      var selected = result;
+      if (result['needsDetails'] == true) {
+        final response = await ref
+            .read(apiClientProvider)
+            .get(
+              widget.registration ? '/auth/work-city-place' : '/geo/place',
+              queryParameters: {
+                'placeId': result['placeId'],
+                'sessionToken': _sessionToken,
+                if (widget.citiesOnly) 'type': 'city',
+              },
+            );
+        selected = Map<String, dynamic>.from(response.data as Map);
+      }
+      if (!mounted || generation != _generation) return;
+      _sessionToken = _newSessionToken();
+      widget.onSelected(selected);
+    } catch (error) {
+      if (mounted && generation == _generation) {
+        setState(() => _message = apiError(error));
+      }
+    } finally {
+      if (mounted && generation == _generation) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -139,11 +192,13 @@ class _AddressSearchFieldState extends ConsumerState<AddressSearchField> {
           ),
           validator: (value) {
             final text = (value ?? '').trim();
-            if (widget.required && text.isEmpty)
+            if (widget.required && text.isEmpty) {
               return 'Enter ${widget.label.toLowerCase()}';
+            }
             if (text.length > 150) return 'Use 150 characters or fewer.';
-            if (widget.required && !widget.citiesOnly && text.contains(','))
+            if (widget.required && !widget.citiesOnly && text.contains(',')) {
               return 'Enter street and city in their separate fields.';
+            }
             return null;
           },
           onFieldSubmitted: canSearch ? (_) => _search(autocomplete) : null,
@@ -211,17 +266,20 @@ class _AddressSearchFieldState extends ConsumerState<AddressSearchField> {
                     .where((value) => value.isNotEmpty)
                     .join(', '),
               ),
-              onTap: () {
-                _generation++;
-                _debounce?.cancel();
-                setState(() => _results = null);
-                widget.onSelected(result);
-              },
+              onTap: widget.enabled && !_loading ? () => _select(result) : null,
             ),
         if ((capabilities.value?['attribution'] as String? ?? '').isNotEmpty)
           Text(
             capabilities.value?['attribution'] as String? ?? '',
-            style: Theme.of(context).textTheme.bodySmall,
+            softWrap: false,
+            style: capabilities.value?['attribution'] == 'Google Maps'
+                ? Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontWeight: FontWeight.w400,
+                    fontStyle: FontStyle.normal,
+                    letterSpacing: 0,
+                  )
+                : Theme.of(context).textTheme.bodySmall,
           ),
       ],
     );

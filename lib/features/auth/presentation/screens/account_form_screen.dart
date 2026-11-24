@@ -13,12 +13,15 @@ import '../../../home/presentation/screens/marketplace_screens.dart';
 import '../../../home/presentation/screens/address_search_field.dart';
 import '../../domain/auth_state.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/account_options_provider.dart';
+import '../../../home/marketplace.dart' show serviceDetailsProvider;
+import 'registration_services_picker.dart';
 
 final _phoneVerificationProvider = FutureProvider.autoDispose<bool>((
   ref,
 ) async {
-  final response = await ref.watch(apiClientProvider).get('/auth/options');
-  return response.data['phoneVerification'] == true;
+  final options = await ref.watch(accountOptionsProvider.future);
+  return options['phoneVerification'] == true;
 });
 
 enum AuthMode { login, customer, contractor, reset }
@@ -46,6 +49,12 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
   bool _busy = false;
   String? _feedback;
   String _service = 'Snow removal';
+  Set<String> _additionalServiceIds = {};
+  static const _legacyServices = <Map<String, dynamic>>[
+    {'id': 'snow', 'title': 'Snow removal'},
+    {'id': 'lawn', 'title': 'Lawn mowing'},
+    {'id': 'cleaning', 'title': 'House cleaning'},
+  ];
   Map<String, dynamic>? _workCity;
 
   bool get _login => widget.mode == AuthMode.login;
@@ -95,7 +104,8 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
         'phoneCode': _phoneCode.text.trim(),
         'role': _contractor ? 'contractor' : 'customer',
         'area': _workCity?['city'] as String? ?? _area.text.trim(),
-        'service': _contractor ? _service : '',
+        'service': _contractor ? registrationPrimaryTitle(ref.read(serviceDetailsProvider).asData?.value ?? _legacyServices, _service) : '',
+        if (_contractor) 'serviceIds': _additionalServiceIds.toList(),
         if (_contractor && _workCity != null) 'workCity': _workCity,
       });
     }
@@ -417,6 +427,8 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
     final verification = !_login && !_reset
         ? ref.watch(_phoneVerificationProvider)
         : null;
+    final catalog = _contractor ? ref.watch(serviceDetailsProvider) : null;
+    final accountOptions = _contractor ? ref.watch(accountOptionsProvider) : null;
     final title = switch (widget.mode) {
       AuthMode.login => 'Welcome to Eden',
       AuthMode.customer => 'Create a customer account',
@@ -427,7 +439,7 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
       AuthMode.login => 'Sign in to book or manage home services.',
       AuthMode.customer => 'Book services and track work at your properties.',
       AuthMode.contractor =>
-        'Tell us where you work and which service you offer.',
+        'Tell us where you work and which services you offer.',
       AuthMode.reset => 'Enter the email address associated with your account.',
     };
     return MarketPage(
@@ -521,26 +533,29 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                           const Text(
                             'Service city selected. It will be saved with your account.',
                           ),
-                        DropdownButtonFormField<String>(
-                          initialValue: _service,
-                          decoration: const InputDecoration(
-                            labelText: 'Primary service',
-                          ),
-                          items: [
-                            for (final service in [
-                              'Snow removal',
-                              'Lawn mowing',
-                              'House cleaning',
-                            ])
-                              DropdownMenuItem(
-                                value: service,
-                                child: Text(service),
-                              ),
-                          ],
-                          onChanged: _busy
-                              ? null
-                              : (value) => setState(() => _service = value!),
+                        if (catalog?.isLoading == true) const LinearProgressIndicator(),
+                        if (catalog?.hasError == true) TextButton(
+                          onPressed: () => ref.invalidate(serviceDetailsProvider),
+                          child: const Text('Retry loading all services'),
                         ),
+                        RegistrationServicesPicker(
+                          services: catalog?.asData?.value ?? _legacyServices,
+                          primary: _service, additionalIds: _additionalServiceIds,
+                          enabled: !_busy,
+                          supportsAdditional: accountOptions?.asData?.value['contractorRegistrationServices'] == true,
+                          onPrimaryChanged: (value) => setState(() {
+                            _service = value;
+                            final id = (catalog?.asData?.value ?? _legacyServices).where((service) => service['title'] == value).firstOrNull?['id'];
+                            _additionalServiceIds.remove(id);
+                          }),
+                          onAdditionalChanged: (ids) => setState(() => _additionalServiceIds = ids),
+                        ),
+                        if (accountOptions?.hasError == true ||
+                            (accountOptions?.hasValue == true && accountOptions?.asData?.value['contractorRegistrationServices'] != true))
+                          TextButton(
+                            onPressed: () { ref.invalidate(accountOptionsProvider); ref.invalidate(serviceDetailsProvider); },
+                            child: const Text('Refresh service options'),
+                          ),
                       ],
                       if (!_reset || _codeRequested)
                         TextFormField(

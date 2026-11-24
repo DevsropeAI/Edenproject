@@ -20,6 +20,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../../auth/providers/auth_provider.dart';
+import '../../../auth/providers/account_options_provider.dart';
 import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../auth/domain/auth_state.dart';
 import '../../marketplace.dart';
@@ -30,6 +31,7 @@ import 'account_extras_screen.dart';
 import 'property_map.dart';
 import 'booking_location.dart';
 import 'marketplace_map.dart';
+import 'contractor_jobs_browser.dart';
 import 'walking_screen.dart';
 
 import 'package:latlong2/latlong.dart';
@@ -412,19 +414,49 @@ class PropertyMeasurements extends StatelessWidget {
   Widget build(BuildContext context) {
     final values = property.measurements;
     if (values.isEmpty) return const SizedBox.shrink();
+    String yard(String key) {
+      if (values[key] != true) return 'No';
+      final size = values['${key}Size']?.toString().trim() ?? '';
+      return size.isEmpty ? 'Yes' : 'Yes · $size';
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Driveway: ${values['driveway']}'),
+        Text('Driveway: ${values['driveway'] ?? 'Not specified'}'),
         Text(
-          'Front yard: ${values['frontYard'] == true ? values['frontYardSize'] : 'No'}',
+          'Front yard: ${yard('frontYard')}',
         ),
         Text(
-          'Backyard: ${values['backyard'] == true ? values['backyardSize'] : 'No'}',
+          'Backyard: ${yard('backyard')}',
         ),
-        Text('Walkway: ${values['walkway']}'),
+        Text('Walkway: ${values['walkway'] ?? 'Not specified'}'),
       ],
     );
+  }
+}
+
+class JobRequirements extends StatelessWidget {
+  const JobRequirements(this.booking, {super.key});
+  final Booking booking;
+
+  @override
+  Widget build(BuildContext context) {
+    final property = booking.property;
+    final text = Theme.of(context).textTheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Property details', style: text.titleMedium),
+      const SizedBox(height: EdenSpacing.sm),
+      Text('${property.type} · ${property.size}'),
+      if (property.measurements.isNotEmpty) PropertyMeasurements(property)
+      else Text('No additional yard or walkway details supplied.', style: text.bodySmall),
+      const SizedBox(height: EdenSpacing.screen),
+      Text('Instructions', style: text.titleMedium),
+      const SizedBox(height: EdenSpacing.sm),
+      if (property.notes.isNotEmpty) Text(property.notes),
+      if (booking.notes.isNotEmpty) Text(booking.notes),
+      if (property.notes.isEmpty && booking.notes.isEmpty)
+        Text('No special instructions supplied.', style: text.bodySmall),
+    ]);
   }
 }
 
@@ -1376,6 +1408,28 @@ class BookingListScreen extends ConsumerWidget {
           (!booking.declined &&
               (booking.status != JobStatus.searching || available || booking.dispatchStatus == 'assigned')),
     );
+    if (contractor && kIsWeb) {
+      final options = ref.watch(accountOptionsProvider);
+      return MarketPage(
+        title: 'Eden Contractor', dark: true,
+        darkNavigation: const ContractorNavigation(index: 0),
+        children: [
+          if (options.hasValue && options.asData?.value['contractorOfferDetails'] != true)
+            const MarketCard(children: [
+              Text('Backend update needed'),
+              Text('Update or restart the backend, then refresh jobs to show available-job locations and property details.'),
+            ]),
+          ContractorJobsBrowser(
+            jobs: visible.toList(), available: available,
+            onAvailabilityChanged: (value) => ref.read(demoSettingsProvider.notifier).update(available: value),
+            onRefresh: () { ref.invalidate(accountOptionsProvider); ref.read(bookingsProvider.notifier).refresh(); },
+            onOpen: (job) => context.push('/job-details/${job.id}'),
+          ),
+          const WalkingEntry(), const _ContractorShortcuts(),
+          MarketCard(children: [ModeSwitchTile(contractor: true, area: area)]),
+        ],
+      );
+    }
     return MarketPage(
       title: contractor ? 'Eden Contractor' : 'My bookings',
       nav: contractor ? null : 1,
@@ -1863,7 +1917,12 @@ class BookingDetailsScreen extends ConsumerWidget {
             Text('${_money.format(booking.total)} CAD'),
             if (booking.recurring) const Text('Weekly service requested'),
             if (booking.property.pin case final pin?)
-              OutlinedButton.icon(
+              if (contractor)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(EdenRadius.field),
+                  child: PropertyMap(initial: LatLng(pin.latitude, pin.longitude)),
+                )
+              else OutlinedButton.icon(
                 icon: const Icon(Icons.map_outlined),
                 label: const Text('View property on map'),
                 onPressed: () => showCustomerDialog<void>(
@@ -1880,9 +1939,7 @@ class BookingDetailsScreen extends ConsumerWidget {
                   ),
                 ),
               ),
-            PropertyMeasurements(booking.property),
-            if (booking.property.notes.isNotEmpty) Text(booking.property.notes),
-            if (booking.notes.isNotEmpty) Text(booking.notes),
+            JobRequirements(booking),
             if (booking.status != JobStatus.searching &&
                 booking.status != JobStatus.cancelled)
               BookingMessageButton(booking: booking, contractor: contractor),

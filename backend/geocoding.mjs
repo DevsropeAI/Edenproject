@@ -1,12 +1,9 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { GoogleGeocodingProvider } from './google-geocoding.mjs';
+import { GeocodingProvider } from './geocoding-provider.mjs';
+export { GeocodingProvider } from './geocoding-provider.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
-
-export class GeocodingProvider {
-  async search() { fail(503, 'Address search is unavailable. Enter the address manually.'); }
-  async autocomplete() { fail(503, 'Address suggestions are unavailable. Use Search or enter the address manually.'); }
-  async reverse() { fail(503, 'Address lookup is unavailable. Enter the address manually.'); }
-}
 
 function normalizeNominatim(row) {
   const a = row.address ?? {};
@@ -96,9 +93,12 @@ export function createGeocoding(env = process.env, fetcher = fetch) {
   const nominatim = env.GEOCODING_CONTACT_EMAIL && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(env.GEOCODING_CONTACT_EMAIL)
     ? new NominatimProvider(env.GEOCODING_CONTACT_EMAIL, fetcher) : null;
   const geoapify = env.GEOAPIFY_API_KEY ? new GeoapifyProvider(env.GEOAPIFY_API_KEY, fetcher) : null;
+  const google = env.GOOGLE_MAPS_SERVER_API_KEY ? new GoogleGeocodingProvider(env.GOOGLE_MAPS_SERVER_API_KEY, fetcher) : null;
   const provider = env.GEOCODING_PROVIDER === 'nominatim' ? nominatim :
-    env.GEOCODING_PROVIDER === 'geoapify' ? geoapify : null;
-  const autocomplete = env.GEOCODING_AUTOCOMPLETE_PROVIDER === 'geoapify' ? geoapify : null;
+    env.GEOCODING_PROVIDER === 'geoapify' ? geoapify :
+    env.GEOCODING_PROVIDER === 'google' ? google : null;
+  const autocomplete = env.GEOCODING_AUTOCOMPLETE_PROVIDER === 'geoapify' ? geoapify :
+    env.GEOCODING_AUTOCOMPLETE_PROVIDER === 'google' ? google : null;
   const cache = new Map();
   const inFlight = new Map();
   const limits = new Map();
@@ -106,7 +106,8 @@ export function createGeocoding(env = process.env, fetcher = fetch) {
   return {
     capabilities: {
       search: Boolean(provider), reverse: Boolean(provider), autocomplete: Boolean(autocomplete),
-      attribution: provider instanceof NominatimProvider ? '© OpenStreetMap contributors' :
+      attribution: provider instanceof GoogleGeocodingProvider || autocomplete instanceof GoogleGeocodingProvider ? 'Google Maps' :
+        provider instanceof NominatimProvider ? '© OpenStreetMap contributors' :
         provider || autocomplete ? 'Powered by Geoapify · © OpenStreetMap contributors' : '',
     },
     async lookup(kind, params, account) {
@@ -118,15 +119,32 @@ export function createGeocoding(env = process.env, fetcher = fetch) {
       const q = params.get('q')?.trim();
       const country = params.get('country')?.trim() ?? '';
       const type = params.get('type') ?? '';
+      const sessionToken = params.get('sessionToken') ?? '';
+      const placeId = params.get('placeId') ?? '';
+      if (sessionToken && !/^[A-Za-z0-9_-]{1,36}$/.test(sessionToken)) fail(400, 'Invalid address search session.');
+      if (kind === 'place' && !/^[A-Za-z0-9_-]{1,512}$/.test(placeId)) fail(400, 'Choose a valid address result.');
       if (type && type !== 'city') fail(400, 'Choose a valid place type.');
-      if (kind !== 'reverse' && (!q || q.length < 3 || q.length > 250)) fail(400, 'Enter between 3 and 250 characters.');
+      if (!['reverse', 'place'].includes(kind) && (!q || q.length < 3 || q.length > 250)) fail(400, 'Enter between 3 and 250 characters.');
       if (country && !/^[A-Za-z]{2}$/.test(country)) fail(400, 'Country filter must be a two-letter code.');
       const lat = Number(params.get('lat')), lng = Number(params.get('lng'));
       if (kind === 'reverse' && (!params.get('lat') || !params.get('lng') || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180)) {
         fail(400, 'Choose valid coordinates.');
       }
-      const selected = kind === 'autocomplete' ? autocomplete : provider;
+      const selected = ['autocomplete', 'place'].includes(kind) ? autocomplete : provider;
       if (!selected) fail(503, 'Address lookup is not configured. You can enter the address manually.');
+      if (kind === 'place' && !(selected instanceof GoogleGeocodingProvider)) fail(503, 'Address details are unavailable. Search again or enter the address manually.');
+      // Google content is fetched on demand, not placed in the legacy result cache.
+      if (selected instanceof GoogleGeocodingProvider) {
+        try {
+          const value = kind === 'reverse' ? await selected.reverse(lat, lng) :
+            kind === 'place' ? await selected.place(placeId, type, sessionToken) :
+            await selected[kind](q, country, type, sessionToken);
+          return kind === 'search' && type === 'city' ? value.filter(row => row.city && row.country) : value;
+        } catch (error) {
+          if (error.status) throw error;
+          fail(503, 'Google address lookup is temporarily unavailable. You can enter the address manually.');
+        }
+      }
       const key = JSON.stringify([kind, q?.toLowerCase(), country.toUpperCase(), type, kind === 'reverse' ? [lat, lng] : null]);
       const saved = cache.get(key);
       if (saved && saved.until > now) return saved.value;

@@ -53,7 +53,7 @@ function Record({ section, search, record }) {
   );
 }
 
-export function Dashboard({ data, section, search, result, mapData, mapError }) {
+export function Dashboard({ data, section, search, result, mapData, mapError, mapKey, mapId }) {
   const query = search.trim().toLowerCase();
   const records = data[section].filter(({ title, detail, status }) =>
     [title, detail, status].some(value => value.toLowerCase().includes(query)),
@@ -94,7 +94,7 @@ export function Dashboard({ data, section, search, result, mapData, mapError }) 
           </div>
           {result === 'saved' && <p role="status">Saved.</p>}
           {result === 'error' && <p role="alert">Could not save. Check the record and try again.</p>}
-          {section==='Map'&&mapData&&<MarketplaceMap data={mapData} search={search} contractors={data.Contractors}/>}
+          {section==='Map'&&mapData&&<MarketplaceMap data={mapData} search={search} contractors={data.Contractors} mapKey={mapKey} mapId={mapId}/>}
           {section==='Map'&&mapError&&<p role="alert">Could not load the map. Check that the backend is running, then <a href="/?section=Map">try again</a>.</p>}
           {section!=='Map'&&!records.length && <p>No matching records.</p>}
           {section === 'LargeJobs' ? (

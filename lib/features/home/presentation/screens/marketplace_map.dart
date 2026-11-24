@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:pointer_interceptor/pointer_interceptor.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +13,7 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/providers/auth_provider.dart';
 import 'marketplace_screens.dart';
+import 'google_marketplace_canvas.dart';
 
 final marketplaceMapProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
   (ref) async {
@@ -112,6 +116,46 @@ class _MarketplaceMapState extends ConsumerState<MarketplaceMap> {
     );
   }
 
+  void _showDetails(Map<String, dynamic> m) {
+    showCustomerDialog<void>(
+      context: context,
+      dark: true,
+      builder: (dialog) => PointerInterceptor(
+        child: AlertDialog(
+          title: Text(m['title'] as String),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(m['detail'] as String),
+                if (m['details'] case final Map d) ...[
+                  if (d['property'] case final Map p) ...[
+                    Text(p['name'] as String? ?? ''),
+                    Text(p['address'] as String? ?? ''),
+                    Text(d['notes'] as String? ?? ''),
+                    Text('CAD ${d['total']}'),
+                  ] else ...[
+                    Text(d['workCity'] as String? ?? ''),
+                    Text(d['service'] as String? ?? ''),
+                    if (m['locationSource'] == 'work_city')
+                      const Text('Approximate work-city location'),
+                  ],
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   bool _visible(Map m) => m['kind'] == 'contractor'
       ? _filters.contains('contractors')
       : _filters.contains('customers') &&
@@ -203,114 +247,76 @@ class _MarketplaceMapState extends ConsumerState<MarketplaceMap> {
                   .map((m) => Map<String, dynamic>.from(m as Map))
                   .where(_visible)
                   .toList();
-              if (markers.isEmpty)
+              if (markers.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.all(EdenSpacing.screen),
                   child: Text(
                     'No visible locations yet. Accepted jobs with saved pins appear here.',
                   ),
                 );
+              }
               return ClipRRect(
                 borderRadius: BorderRadius.circular(EdenRadius.field),
                 child: SizedBox(
                   height: 320,
-                  child: FlutterMap(
-                    options: MapOptions(
-                      initialCenter: LatLng(
-                        (markers.first['latitude'] as num).toDouble(),
-                        (markers.first['longitude'] as num).toDouble(),
-                      ),
-                      initialZoom: 12,
-                      maxZoom: 19,
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.eden_frontend',
-                      ),
-                      MarkerLayer(
-                        markers: [
-                          for (final m in markers)
-                            Marker(
-                              point: LatLng(
-                                (m['latitude'] as num).toDouble(),
-                                (m['longitude'] as num).toDouble(),
-                              ),
-                              width: 60,
-                              height: 60,
-                              child: IconButton(
-                                tooltip: m['title'] as String,
-                                onPressed: () => showCustomerDialog<void>(
-                                  context: context,
-                                  dark: true,
-                                  builder: (dialog) => AlertDialog(
-                                    title: Text(m['title'] as String),
-                                    content: SingleChildScrollView(
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(m['detail'] as String),
-                                          if (m['details']
-                                              case final Map d) ...[
-                                            if (d['property']
-                                                case final Map p) ...[
-                                              Text(p['name'] as String? ?? ''),
-                                              Text(
-                                                p['address'] as String? ?? '',
-                                              ),
-                                              Text(d['notes'] as String? ?? ''),
-                                              Text('CAD ${d['total']}'),
-                                            ] else ...[
-                                              Text(
-                                                d['workCity'] as String? ?? '',
-                                              ),
-                                              Text(
-                                                d['service'] as String? ?? '',
-                                              ),
-                                              if (m['locationSource'] ==
-                                                  'work_city')
-                                                const Text(
-                                                  'Approximate work-city location',
-                                                ),
-                                            ],
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(dialog),
-                                        child: const Text('Close'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                icon: Opacity(
-                                  opacity: m['online'] == false
-                                      ? (value['config']['offlineOpacity']
-                                                as num)
-                                            .toDouble()
-                                      : 1,
-                                  child: _MapSymbol(
-                                    Map<String, dynamic>.from(
-                                      value['config'][m['kind']] as Map,
-                                    ),
-                                    offline: m['online'] == false,
-                                  ),
-                                ),
-                              ),
+                  child: kIsWeb
+                      ? GoogleMarketplaceCanvas(
+                          markers: markers,
+                          config: Map<String, dynamic>.from(
+                            value['config'] as Map,
+                          ),
+                          onSelected: _showDetails,
+                        )
+                      : FlutterMap(
+                          options: MapOptions(
+                            initialCenter: LatLng(
+                              (markers.first['latitude'] as num).toDouble(),
+                              (markers.first['longitude'] as num).toDouble(),
                             ),
-                        ],
-                      ),
-                      const Align(
-                        alignment: Alignment.bottomRight,
-                        child: Text('© OpenStreetMap contributors'),
-                      ),
-                    ],
-                  ),
+                            initialZoom: 12,
+                            maxZoom: 19,
+                          ),
+                          children: [
+                            TileLayer(
+                              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                              userAgentPackageName: 'com.example.eden_frontend',
+                            ),
+                            MarkerLayer(
+                              markers: [
+                                for (final m in markers)
+                                  Marker(
+                                    point: LatLng(
+                                      (m['latitude'] as num).toDouble(),
+                                      (m['longitude'] as num).toDouble(),
+                                    ),
+                                    width: 60,
+                                    height: 60,
+                                    child: IconButton(
+                                      tooltip: m['title'] as String,
+                                      onPressed: () => _showDetails(m),
+                                      icon: Opacity(
+                                        opacity: m['online'] == false
+                                            ? (value['config']['offlineOpacity']
+                                                      as num)
+                                                  .toDouble()
+                                            : 1,
+                                        child: _MapSymbol(
+                                          Map<String, dynamic>.from(
+                                            value['config'][m['kind']] as Map,
+                                          ),
+                                          offline: m['online'] == false,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const Align(
+                              alignment: Alignment.bottomRight,
+                              child: Text('© OpenStreetMap contributors'),
+                            ),
+                          ],
+                        ),
                 ),
               );
             },
