@@ -7,7 +7,7 @@ const transitions = {
   accepted: 'enRoute', enRoute: 'arrived', arrived: 'working',
   working: 'submitted',
 };
-const customerNoticeStatuses = new Set(['accepted', 'enRoute', 'submitted']);
+const customerNoticeStatuses = new Set(['accepted', 'enRoute', 'arrived', 'working', 'submitted', 'completed', 'searching', 'cancelled']);
 
 function error(status, message) {
   throw Object.assign(new Error(message), { status });
@@ -65,7 +65,7 @@ const currentPropertyJoin = `LEFT JOIN properties p ON p.owner = b.customer_id
 
 const booking = (row, audience) => {
   const { location, releasedBy, assignmentHistory, ...details } = parse(row.details);
-  if (audience?.role === 'contractor') delete details.breakdown;
+  if (audience?.role === 'contractor') { delete details.breakdown; delete details.customerNoticeReadVersion; }
   return { ...details, id: row.id, status: row.status, version: row.version,
     ...(row.service_category ? { service_category: row.service_category } : {}),
     ...(row.dispatch_status ? { dispatch_status: row.dispatch_status } : {}),
@@ -255,6 +255,20 @@ export async function marketplace({ method, path, user, run, first, read, addres
         : available && matchesOffer(details, user));
     let status = row.status;
     let contractor = row.contractor_id;
+    if (body.action === 'read-updates') {
+      if (!customer) error(404, 'Booking unavailable.');
+      const stored = parse(row.details);
+      const latest = (stored.customerNotices ?? []).reduce((value, notice) => Math.max(value, notice.version), 0);
+      const seen = body.version;
+      if (!Number.isSafeInteger(seen) || seen < 0 || seen > latest) error(400, 'Invalid booking update position.');
+      if (seen <= (stored.customerNoticeReadVersion ?? 0)) return booking(row, user);
+      // Guard the read acknowledgement with the normal booking version to avoid
+      // overwriting concurrent milestones, messages or another device's read state.
+      const result = await run(`UPDATE bookings SET details = JSON_SET(details, '$.customerNoticeReadVersion', ?), version = version + 1
+        WHERE id = ? AND customer_id = ? AND version = ?`, seen, id, user.id, row.version);
+      if (!result.affectedRows) error(409, 'The booking changed. Refresh and try again.');
+      return booking({ ...row, version: row.version + 1, details: { ...stored, customerNoticeReadVersion: seen } }, user);
+    }
     if (offered && body.action === 'decline') {
       if (row.dispatch_status === 'assigned') {
         const result = await run("UPDATE bookings SET dispatch_status = 'pending_admin', assigned_contractor_id = NULL, assigned_at = NULL, admin_note = CONCAT(COALESCE(admin_note, ''), ' [Declined by contractor]') WHERE id = ? AND dispatch_status = 'assigned' AND contractor_id IS NULL AND assigned_contractor_id = ?", id, user.id);
@@ -372,7 +386,7 @@ export async function marketplace({ method, path, user, run, first, read, addres
           error(400, 'Choose a valid booking action.');
       }
     }
-    if (status !== row.status && customerNoticeStatuses.has(status)) {
+    if (status !== row.status && customerNoticeStatuses.has(status) && !details.customerDeleted) {
       details.customerNotices = [
         ...(details.customerNotices ?? []).slice(-49),
         { status, version: row.version + 1, at: new Date().toISOString() },

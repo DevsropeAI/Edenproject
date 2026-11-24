@@ -190,7 +190,7 @@ class _DemoSettingsScreenState extends ConsumerState<DemoSettingsScreen> {
                 const MarketHeading('Order updates'),
                 if (notices.isEmpty)
                   const Text(
-                    'Updates will appear here when a contractor accepts a booking, heads your way, or submits work.',
+                    'Booking progress updates, including acceptance, arrival, completion and reopening, will appear here.',
                   ),
                 for (final entry in notices)
                   ListTile(

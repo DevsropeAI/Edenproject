@@ -139,6 +139,11 @@ String orderNoticeText(JobStatus status) => switch (status) {
   JobStatus.accepted => 'A contractor accepted your booking',
   JobStatus.enRoute => 'Your contractor is on the way',
   JobStatus.submitted => 'Work is ready for your approval',
+  JobStatus.arrived => 'Your contractor has arrived',
+  JobStatus.working => 'Work on your booking is in progress',
+  JobStatus.completed => 'Your booking is completed',
+  JobStatus.searching => 'Your booking is available for a new contractor',
+  JobStatus.cancelled => 'Your booking was cancelled',
   _ => status.label,
 };
 
@@ -167,6 +172,7 @@ class Booking {
     this.dispatchStatus,
     this.rejectionReason,
     this.serviceCategory = 'small',
+    this.customerNoticeReadVersion = 0,
   });
 
   final int id;
@@ -194,6 +200,9 @@ class Booking {
   final String? dispatchStatus;
   final String? rejectionReason;
   final String serviceCategory;
+  final int customerNoticeReadVersion;
+  int get latestCustomerNoticeVersion => customerNotices.fold(0, (version, notice) => notice.version > version ? notice.version : version);
+  bool get hasUnreadUpdates => latestCustomerNoticeVersion > customerNoticeReadVersion;
 
   bool hasUnreadMessages(bool contractor) => messages
       .skip(contractor ? contractorRead : customerRead)
@@ -208,6 +217,7 @@ class Booking {
     dispatchStatus: json['dispatch_status'] as String?,
     rejectionReason: json['rejection_reason'] as String?,
     serviceCategory: json['service_category'] as String? ?? 'small',
+    customerNoticeReadVersion: (json['customerNoticeReadVersion'] as num?)?.toInt() ?? 0,
     total: (json['total'] as num).toDouble(),
     notes: json['notes'] as String,
     status: JobStatus.values.byName(json['status'] as String),
@@ -247,6 +257,7 @@ class Booking {
     String? review,
     bool? declined,
     bool clearAfter = false,
+    int? customerNoticeReadVersion,
   }) => Booking(
     id: id,
     property: property,
@@ -256,6 +267,7 @@ class Booking {
     dispatchStatus: dispatchStatus,
     rejectionReason: rejectionReason,
     serviceCategory: serviceCategory,
+    customerNoticeReadVersion: customerNoticeReadVersion ?? this.customerNoticeReadVersion,
     total: total,
     notes: notes,
     recurring: recurring,
@@ -463,6 +475,34 @@ class Properties extends MarketplaceRecords<Property> {
 }
 
 class Bookings extends MarketplaceRecords<Booking> {
+  final _updateReads = <(String?, String?, int, int), Future<void>>{};
+
+  Future<void> markUpdatesRead(int id, int version) {
+    final account = ref.read(_marketplaceModeProvider);
+    final key = (account?.id, account?.role, id, version);
+    final current = _updateReads[key];
+    if (current != null) return current;
+    late Future<void> pending;
+    pending = _markUpdatesRead(id, version).whenComplete(() {
+      if (identical(_updateReads[key], pending)) _updateReads.remove(key);
+    });
+    _updateReads[key] = pending;
+    return pending;
+  }
+
+  Future<void> _markUpdatesRead(int id, int version) async {
+    final account = ref.read(_marketplaceModeProvider);
+    final response = await ref.read(apiClientProvider).post('$path/$id', data: {'action': 'read-updates', 'version': version});
+    if (!ref.mounted || ref.read(_marketplaceModeProvider) != account) return;
+    final confirmed = (response.data['customerNoticeReadVersion'] as num?)?.toInt() ?? 0;
+    state = [for (final booking in state)
+      if (booking.id == id && confirmed > booking.customerNoticeReadVersion)
+        booking.update(customerNoticeReadVersion: confirmed)
+      else booking,
+    ];
+    await refresh(silent: true);
+  }
+
   Future<void> markMessagesRead(int id, int count) async {
     await ref
         .read(apiClientProvider)

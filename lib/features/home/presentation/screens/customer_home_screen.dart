@@ -6,6 +6,7 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/widgets/glass_controls.dart';
 import '../../marketplace.dart';
 import 'marketplace_screens.dart';
+import 'customer_booking_tabs.dart';
 
 class CustomerHomeScreen extends ConsumerWidget {
   const CustomerHomeScreen({super.key});
@@ -13,14 +14,7 @@ class CustomerHomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final catalog = ref.watch(serviceCatalogProvider);
-    final active = ref
-        .watch(bookingsProvider)
-        .where(
-          (booking) =>
-              booking.status != JobStatus.completed &&
-              booking.status != JobStatus.cancelled,
-        )
-        .firstOrNull;
+    final bookings = ref.watch(bookingsProvider);
     final details = ref.watch(serviceDetailsProvider).value ?? const <Map<String,dynamic>>[];
     final services = [for(final service in catalog.value?.keys ?? <Service>[])
       (service,service.isSnow ? Icons.ac_unit : Icons.home_repair_service_outlined,
@@ -35,26 +29,11 @@ class CustomerHomeScreen extends ConsumerWidget {
           'Book and manage services for your home.',
           Icons.home_work_outlined,
         ),
-        if (active != null)
-          MarketCard(
-            children: [
-              const Text('Active order'),
-              Text(active.service.label),
-              StatusChip(
-                label: active.status.label,
-                status: active.status == JobStatus.searching
-                    ? EdenStatus.pending
-                    : active.status == JobStatus.enRoute ||
-                          active.status == JobStatus.working
-                    ? EdenStatus.live
-                    : EdenStatus.neutral,
-              ),
-              TextButton(
-                onPressed: () => context.push('/bookings/${active.id}'),
-                child: const Text('Track order'),
-              ),
-            ],
-          ),
+        CustomerBookingTabs(
+          bookings: bookings,
+          onOpen: (booking) => context.push('/bookings/${booking.id}'),
+          onRefresh: () => ref.read(bookingsProvider.notifier).refresh(),
+        ),
         Builder(
           builder: (context) => Text(
             'Explore services',

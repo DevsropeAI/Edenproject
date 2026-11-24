@@ -32,6 +32,8 @@ import 'property_map.dart';
 import 'booking_location.dart';
 import 'marketplace_map.dart';
 import 'contractor_jobs_browser.dart';
+import 'customer_booking_tabs.dart';
+import 'customer_booking_update_reader.dart';
 import 'walking_screen.dart';
 
 import 'package:latlong2/latlong.dart';
@@ -1430,6 +1432,22 @@ class BookingListScreen extends ConsumerWidget {
         ],
       );
     }
+    if (!contractor) {
+      return MarketPage(
+        title: 'My bookings', nav: 1, dark: true,
+        darkNavigation: const CustomerNavigation(index: 1),
+        children: [
+          const MarketBanner('Your bookings', 'Follow service progress and review finished work.', Icons.receipt_long_outlined),
+          CustomerBookingTabs(
+            heading: 'Booking status',
+            bookings: bookings,
+            onOpen: (booking) => context.push('/bookings/${booking.id}'),
+            onRefresh: () => ref.read(bookingsProvider.notifier).refresh(),
+            onBrowse: () => context.go('/customer-home'),
+          ),
+        ],
+      );
+    }
     return MarketPage(
       title: contractor ? 'Eden Contractor' : 'My bookings',
       nav: contractor ? null : 1,
@@ -1891,7 +1909,7 @@ class BookingDetailsScreen extends ConsumerWidget {
           ? current.update(status: next)
           : current,
     );
-    return MarketPage(
+    return CustomerBookingUpdateReader(booking: booking, enabled: !contractor, child: MarketPage(
       title: contractor ? 'Job details' : 'Booking details',
       dark: true,
       actions: [
@@ -2263,7 +2281,7 @@ class BookingDetailsScreen extends ConsumerWidget {
             ],
           ),
       ],
-    );
+    ));
   }
 }
 
@@ -2665,6 +2683,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _markingRead = true;
     try {
       final count = booking.messages.length;
+      if (!widget.contractor && booking.hasUnreadUpdates) {
+        // Coalesces with the visible-route reader, then reads chat messages so
+        // the two acknowledgements do not race on the booking's version.
+        await ref.read(bookingsProvider.notifier).markUpdatesRead(booking.id, booking.latestCustomerNoticeVersion);
+      }
       await ref
           .read(bookingsProvider.notifier)
           .markMessagesRead(booking.id, count);
@@ -2714,7 +2737,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (sent && mounted && _message.text.trim() == message) _message.clear();
     }
 
-    return MarketPage(
+    return CustomerBookingUpdateReader(booking: booking, enabled: !widget.contractor, child: MarketPage(
       title: 'Messages',
       dark: true,
       children: [
@@ -2776,7 +2799,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           ],
         ),
       ],
-    );
+    ));
   }
 }
 
