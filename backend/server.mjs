@@ -1,3 +1,5 @@
+import {validateWorkPin,saveWorkPin} from './work-pin.mjs';
+import {assignLongTerm} from './long-term-dispatch.mjs';
 import { image, marketplace } from './marketplace.mjs';
 import { createGeocoding } from './geocoding.mjs';
 import { createAddressStore } from './addresses.mjs';
@@ -108,7 +110,7 @@ export function createApi({
     if (method === 'GET' && path === '/api/services') {
       if (pricing) return run(`SELECT id,title,price_cents AS priceCents,service_category,
         short_description AS description,image_url AS imageUrl,estimated_duration_minutes AS durationMinutes,
-        minimum_price_cents AS minimumPriceCents,currency FROM services WHERE active=1 ORDER BY service_category DESC,title`);
+        minimum_price_cents AS minimumPriceCents,currency FROM services WHERE active=1 ORDER BY title`);
       return run('SELECT id, title, price_cents AS priceCents FROM services WHERE active = 1 ORDER BY id');
     }
     if (method === 'POST' && path === '/api/auth/password-reset/request') {
@@ -150,7 +152,7 @@ export function createApi({
       return { changed: true };
     }
     if (method === 'GET' && path === '/api/auth/options') {
-      return { phoneVerification: Boolean(phoneVerification), contractorOfferDetails: true, contractorRegistrationServices: Boolean(pricing) };
+      return { phoneVerification: Boolean(phoneVerification), contractorOfferDetails: true, contractorRegistrationServices: Boolean(pricing), contractorWorkPin: true };
     }
     if (method === 'GET' && path === '/api/auth/work-city-options') {
       limitAuth(req, 'city');
@@ -179,11 +181,13 @@ export function createApi({
       const { email, password } = credentials(body, true);
       const { role } = body;
       if (!roles.has(role)) fail(400, 'Choose an account role.');
+      if(body.workPin!=null&&role!=='contractor')fail(400,'Work-location pins are for contractor accounts.');
+      const workPin=body.workPin==null?null:validateWorkPin(body.workPin);
       const name = field(body, 'name', 100);
       const phone = field(body, 'phone', 35);
       if (phone.replace(/\D/g, '').length < 7) fail(400, 'Enter a valid phone number.');
       const catalog = role === 'contractor' && pricing ? await run('SELECT id, title FROM services WHERE active = 1 ORDER BY title') : null;
-      const { area, service } = role === 'contractor' ? contractorDetails(body, catalog?.map(row => row.title) ?? services) : { area: '', service: '' };
+      const { area, service } = role === 'contractor' ? contractorDetails(workPin?{...body,area:typeof body.area==='string'&&body.area.trim()?body.area:'Pinned work location'}:body, catalog?.map(row => row.title) ?? services) : { area: '', service: '' };
       const serviceIds = body.serviceIds ?? [];
       if (!Array.isArray(serviceIds) || serviceIds.length > 50 || serviceIds.some(id => typeof id !== 'string' || !id.length || id.length > 20) || new Set(serviceIds).size !== serviceIds.length) fail(400, 'Choose valid additional services.');
       if (serviceIds.length && role !== 'contractor') fail(400, 'Additional services are for contractor accounts.');
@@ -198,7 +202,7 @@ export function createApi({
         }
       }
       try {
-        if (body.workCity != null || serviceIds.length) {
+        if (body.workCity != null || serviceIds.length || workPin) {
           const connection = await db.getConnection();
           try {
             await connection.beginTransaction();
@@ -219,6 +223,7 @@ export function createApi({
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `, userId, email, hashPassword(password), name, phone, role, Number(role === 'customer'), Number(role === 'contractor'), area, service);
             for (const id of serviceIds) await transactionRun('INSERT INTO contractor_services (user_id, service_id) VALUES (?, ?)', userId, id);
+            if(workPin)await saveWorkPin(transactionRun,userId,workPin);
             await connection.commit();
           } catch (error) {
             await connection.rollback();
@@ -259,7 +264,7 @@ export function createApi({
       }
       if(method==='GET'&&path==='/api/admin/map') return mapData(run,{role:'admin'});
       if (pricing) {
-        const response=await catalogAdmin({path,method,read:()=>readJson(req),run});
+        const response=await catalogAdmin({path,method,read:()=>readJson(req),run,db});
         if(response!==undefined)return response;
       }
       if (method === 'GET' && path === '/api/admin/dashboard') {
@@ -307,25 +312,24 @@ export function createApi({
           Payments: payments ? await payments.adminList(run) : [],
           Services: (await run('SELECT * FROM services ORDER BY id')).map(service => ({
             id: service.id, title: service.title, detail: 'CAD ' + (service.price_cents / 100).toFixed(2),
-            priceCents: service.price_cents, service_category: service.service_category ?? 'small', status: service.active ? 'Active' : 'Inactive',
+            description: service.short_description ?? '', imageUrl: service.image_url ?? '', durationMinutes: service.estimated_duration_minutes ?? 60, minimumPriceCents: service.minimum_price_cents ?? 0, priceCents: service.price_cents, service_category: service.service_category ?? 'small', status: service.active ? 'Active' : 'Inactive',
           })),
           Verification: await run(`SELECT users.id, users.name AS title, users.email AS detail,
             COALESCE(contractor_reviews.status, 'Pending') AS status, COUNT(account_images.kind) = 2 AS complete
             FROM users JOIN account_images ON account_images.user_id = users.id AND account_images.kind <> 'profile'
             LEFT JOIN contractor_reviews ON contractor_reviews.user_id = users.id
             WHERE users.contractor = 1 GROUP BY users.id, users.name, users.email, contractor_reviews.status`),
-          LargeJobs: largeJobsDispatch ? await run(`SELECT b.id, b.dispatch_status,
-            JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.service')) AS service,
-            JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.total')) AS total,
-            JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.property.address')) AS address,
-            JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.property.cityId')) AS cityId
-            FROM bookings b WHERE b.dispatch_status = 'pending_admin' AND b.status = 'searching' ORDER BY b.id DESC`).then(rows => rows.map(row => ({
-              id: String(row.id), title: 'Large Job #' + row.id,
-              serviceId: row.service,
-              cityId: row.cityId == null ? null : Number(row.cityId),
-              detail: row.service + ' - CAD ' + row.total,
-              address: row.address, status: row.dispatch_status,
-            }))) : [],
+          LargeJobs: [], // Deprecated compatibility key; service categories no longer control dispatch.
+          LongTermJobs: pricing ? (await run(`SELECT b.*, u.name AS customer_name, u.email AS customer_email
+            FROM bookings b LEFT JOIN users u ON u.id=b.customer_id
+            WHERE b.status='searching' AND b.dispatch_status='pending_admin'
+            AND JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.bookingType'))='long_term' ORDER BY b.id DESC`)).map(row=>{
+              const d=typeof row.details==='string'?JSON.parse(row.details):row.details;
+              return {id:String(row.id),title:(d.serviceTitle??d.service)+' #'+row.id,
+                detail:[row.customer_name,row.customer_email].filter(Boolean).join(' · '),
+                address:d.property?.address??'',notes:d.notes??'',propertyNotes:d.property?.notes??'',measurements:d.property?.measurements??{},
+                scheduledDate:d.scheduledDate??d.date,total:d.total,status:row.dispatch_status};
+            }) : [],
           Support: await run(`SELECT support.id, support.description AS title, users.email AS detail, support.status
             FROM support JOIN users ON users.id = support.user_id ORDER BY support.created_at DESC, support.id DESC`),
         };
@@ -374,36 +378,7 @@ export function createApi({
         return { status };
       }
       const dispatch = /^\/api\/admin\/dispatch\/(\d+)$/.exec(path);
-      if (dispatch && method === 'POST') {
-        if (!largeJobsDispatch) fail(503, 'Large-job dispatch is awaiting the database migration.');
-        const { action, contractorId, reason, note } = await readJson(req);
-        const bookingId = Number(dispatch[1]);
-        if (action === 'assign') {
-          if (!contractorId) fail(400, 'Choose a contractor.');
-          const contractor = await first('SELECT * FROM users WHERE id = ? AND contractor = 1 AND blocked = 0', contractorId);
-          if (!contractor) fail(404, 'Contractor unavailable.');
-          const bookingRow = await first("SELECT JSON_UNQUOTE(JSON_EXTRACT(details, '$.service')) AS service FROM bookings WHERE id = ?", bookingId);
-          if (!bookingRow) fail(404, 'Job not found.');
-          const approved = await first("SELECT 1 AS ok FROM contractor_reviews WHERE user_id = ? AND status = 'Approved'", contractorId);
-          if (!approved) fail(409, 'This contractor is not verified.');
-          const primaryService = await first('SELECT 1 AS ok FROM services WHERE id = ? AND LOWER(title) = LOWER(?)', bookingRow.service, contractor.service);
-          const additionalService = await first('SELECT 1 AS ok FROM contractor_services WHERE user_id = ? AND service_id = ?', contractorId, bookingRow.service);
-          const offersService = Boolean(primaryService || additionalService);
-          if (!offersService) fail(409, 'This contractor does not offer this service.');
-          const result = await run(`UPDATE bookings SET dispatch_status = 'assigned', assigned_contractor_id = ?, assigned_by_admin_id = (SELECT id FROM users WHERE email = ? AND role = 'admin' LIMIT 1), assigned_at = NOW(), admin_note = ? WHERE id = ? AND dispatch_status = 'pending_admin'`,
-            contractorId, req.adminEmail ?? 'admin', note || null, bookingId);
-          if (!result.affectedRows) fail(409, 'This job is no longer pending.');
-          return { status: 'assigned' };
-        }
-        if (action === 'reject') {
-          if (!reason) fail(400, 'A reason is required.');
-          const result = await run(`UPDATE bookings SET dispatch_status = 'rejected', status = 'cancelled', rejection_reason = ?, assigned_by_admin_id = (SELECT id FROM users WHERE email = ? AND role = 'admin' LIMIT 1) WHERE id = ? AND dispatch_status IN ('pending_admin', 'assigned')`,
-            reason, req.adminEmail ?? 'admin', bookingId);
-          if (!result.affectedRows) fail(409, 'This job cannot be rejected.');
-          return { status: 'rejected' };
-        }
-        fail(400, 'Unknown action.');
-      }
+      if (method === 'POST' && dispatch && pricing) return assignLongTerm(db,Number(dispatch[1]),await readJson(req));
       const match = /^\/api\/admin\/(accounts|support)\/([a-f0-9]{64})$/.exec(path);
       if (method === 'POST' && match) {
         const { status } = await readJson(req);
@@ -427,17 +402,17 @@ export function createApi({
     `, session, Date.now());
     if (!user) fail(401, 'Sign in to continue.');
     if(walking&&path.startsWith('/api/walking/'))return walking.route({method,path,user,body:method==='POST'?await readJson(req,100000):{}});
-    if(pricing&&method==='GET'&&path==='/api/contractor/map')return mapData(run,user);
+    if(pricing&&method==='GET'&&path==='/api/contractor/map') {
+      const offers=await marketplace({method:'GET',path:'/api/bookings',user,run,first,addressStore,pricing});
+      return mapData(run,user,offers);
+    }
     if (pricing && path==='/api/contractor/services') return contractorServices({method,user,read:()=>readJson(req),run,db});
     if (pricing && path==='/api/quotes' && method==='POST') return pricing.quote(user,await readJson(req));
     if (pricing && path==='/api/add-ons' && method==='GET') {
       if(user.role!=='customer')fail(403,'Switch to customer mode.');
       return run('SELECT id,service_id,name,price_cents FROM add_ons WHERE active=1 ORDER BY name');
     }
-    if (pricing && user.role==='contractor' && path.startsWith('/api/bookings')) {
-      user.additionalServices=(await run(`SELECT service_id FROM contractor_services WHERE user_id=?
-        UNION SELECT id AS service_id FROM services WHERE LOWER(title)=LOWER(?)`,user.id,user.service)).map(r=>r.service_id);
-    }
+
     if (path.startsWith('/api/geo/')) {
       if (!roles.has(user.role)) fail(403, 'Choose a customer or contractor account.');
       if (method !== 'GET') fail(405, 'Use a GET request.');
@@ -453,13 +428,16 @@ export function createApi({
       const city = addressStore && user.city_id
         ? await first('SELECT id, name, state, country, latitude, longitude FROM cities WHERE id = ?', user.city_id)
         : null;
-      return { area: user.area, city };
+      const preference=await first('SELECT details FROM preferences WHERE user_id = ?',user.id);
+      const preferences=typeof preference?.details==='string'?JSON.parse(preference.details):preference?.details??{};
+      return { area: user.area, city, workPin: preferences.workPin??null };
     }
     if (method === 'POST' && path === '/api/contractor/work-location') {
       if (user.role !== 'contractor') fail(403, 'Switch to contractor mode.');
-      if (!addressStore) fail(503, 'Structured work locations are awaiting the database update. Your existing service area still works.');
       const body = await readJson(req);
-      if (body.city == null) fail(400, 'Select a city.');
+      if(body.workPin!=null){const pin=validateWorkPin(body.workPin);await saveWorkPin(run,user.id,pin);return {saved:true,workPin:pin};}
+      if (!addressStore) fail(503, 'Structured work locations are awaiting the database update. Your existing service area still works.');
+      if (body.city == null) fail(400, 'Select a city or work-location pin.');
       const cityId = await addressStore.city(body.city);
       await run('UPDATE users SET city_id = ? WHERE id = ?', cityId, user.id);
       return { saved: true, cityId };
@@ -482,7 +460,8 @@ export function createApi({
       const { role } = body;
       if (!roles.has(role)) fail(400, 'Choose an account role.');
       if (role === 'contractor' && !user.contractor) {
-        const { area, service } = contractorDetails(body);
+        const activeServices = pricing ? await run('SELECT title FROM services WHERE active=1') : null;
+        const { area, service } = contractorDetails(body, activeServices?.map(row=>row.title) ?? services);
         await run("UPDATE users SET contractor = 1, role = 'contractor', area = ?, service = ? WHERE id = ?", area, service, user.id);
       } else if (role === 'customer') {
         await run("UPDATE users SET customer = 1, role = 'customer' WHERE id = ?", user.id);

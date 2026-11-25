@@ -1,25 +1,46 @@
+import { randomBytes } from 'node:crypto';
 const fail = (status,message) => {throw Object.assign(new Error(message),{status});};
 const integer = (v,max=1000000) => Number.isInteger(v)&&v>=0&&v<=max;
 const str = (v,max=100) => typeof v==='string'&&v.trim().length>0&&v.length<=max;
-export async function catalogAdmin({path,method,read,run}) {
+export async function catalogAdmin({path,method,read,run,db}) {
   const match=/^\/api\/admin\/(services|add-ons|pricing-rules|taxes|coupons)(?:\/([A-Za-z0-9_-]{1,40}))?$/.exec(path);
   if(!match)return undefined;
   const [,kind,id]=match;
   const table={services:'services','add-ons':'add_ons','pricing-rules':'service_price_modifiers',taxes:'city_tax_rates',coupons:'coupons'}[kind];
   if(method==='GET'&&!id)return run(`SELECT * FROM ${table}`);
-  if(method!=='POST'||!id)return undefined;
+  if(method!=='POST'||(!id&&kind!=='services'))return undefined;
   const b=await read();
   if(kind==='services') {
-    if(!['Active','Inactive'].includes(b.status)||!integer(b.priceCents)||b.priceCents<100||!['small','large'].includes(b.service_category??'small'))fail(400,'Check price, status and category.');
+    if(!['Active','Inactive'].includes(b.status)||!integer(b.priceCents)||b.priceCents<100)fail(400,'Check price and status.');
+    if((!id||b.title!=null)&&!str(b.title,80))fail(400,'Enter a service name (up to 80 characters).');
     if(b.minimumPriceCents!=null&&!integer(b.minimumPriceCents))fail(400,'Invalid minimum price.');
     if(b.estimatedDurationMinutes!=null&&(!integer(b.estimatedDurationMinutes,14400)||b.estimatedDurationMinutes<1))fail(400,'Invalid duration.');
     if(b.shortDescription!=null&&(typeof b.shortDescription!=='string'||b.shortDescription.length>300))fail(400,'Invalid description.');
     if(b.imageUrl!=null&&(typeof b.imageUrl!=='string'||b.imageUrl.length>500||b.imageUrl&&!/^https:\/\//.test(b.imageUrl)))fail(400,'Use an HTTPS image URL.');
-    const r=await run(`UPDATE services SET active=?,price_cents=?,service_category=COALESCE(?,service_category),
-      minimum_price_cents=COALESCE(?,minimum_price_cents),estimated_duration_minutes=COALESCE(?,estimated_duration_minutes),
-      short_description=COALESCE(?,short_description),image_url=COALESCE(?,image_url) WHERE id=?`,
-    Number(b.status==='Active'),b.priceCents,b.service_category??null,b.minimumPriceCents??null,b.estimatedDurationMinutes??null,b.shortDescription??null,b.imageUrl??null,id);
-    if(!r.affectedRows)fail(404,'Service unavailable.');return {saved:true};
+    if(!id){
+      const serviceId='svc'+randomBytes(8).toString('hex');
+      await run(`INSERT INTO services (id,title,price_cents,active,short_description,image_url,estimated_duration_minutes,minimum_price_cents,currency)
+        VALUES (?,?,?,?,?,?,?,?,?)`,serviceId,b.title.trim(),b.priceCents,Number(b.status==='Active'),b.shortDescription??'',b.imageUrl||null,b.estimatedDurationMinutes??60,b.minimumPriceCents??0,'CAD');
+      return {saved:true,id:serviceId};
+    }
+    // Renaming a catalog entry also preserves legacy primary-service matching.
+    const connection=db ? await db.getConnection() : null;
+    const execute=connection ? async(sql,...args)=>(await connection.execute(sql,args))[0] : run;
+    try {
+      if(connection)await connection.beginTransaction();
+      if(b.title!=null){
+        const [existing]=await execute('SELECT title FROM services WHERE id=? FOR UPDATE',id);
+        if(!existing)fail(404,'Service unavailable.');
+        await execute('UPDATE users SET service=? WHERE contractor=1 AND LOWER(service)=LOWER(?)',b.title.trim(),existing.title);
+      }
+      const r=await execute(`UPDATE services SET active=?,price_cents=?,title=COALESCE(?,title),
+        minimum_price_cents=COALESCE(?,minimum_price_cents),estimated_duration_minutes=COALESCE(?,estimated_duration_minutes),
+        short_description=COALESCE(?,short_description),image_url=COALESCE(?,image_url) WHERE id=?`,
+        Number(b.status==='Active'),b.priceCents,b.title?.trim()??null,b.minimumPriceCents??null,b.estimatedDurationMinutes??null,b.shortDescription??null,b.imageUrl??null,id);
+      if(!r.affectedRows)fail(404,'Service unavailable.');
+      if(connection)await connection.commit();
+      return {saved:true};
+    }catch(e){if(connection)await connection.rollback();throw e;}finally{connection?.release();}
   }
   if(kind==='taxes') {
     if(!/^\d+$/.test(id)||!integer(b.rateBps,10000))fail(400,'Check city and tax rate.');

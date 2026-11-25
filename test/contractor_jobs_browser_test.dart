@@ -8,6 +8,7 @@ Booking job(
   JobStatus status = JobStatus.searching,
   String? dispatch,
   bool pin = true,
+  String bookingType = 'one_time',
 }) => Booking(
   id: id,
   property: Property(
@@ -25,10 +26,24 @@ Booking job(
   notes: '',
   status: status,
   dispatchStatus: dispatch,
+  bookingType: bookingType,
 );
 
 void main() {
-  test('tabs partition jobs and keep pending large requests out of contractor offers', () {
+  test('available and active jobs map all saved customer pins alongside the self circle', () {
+    for (final status in [JobStatus.searching, JobStatus.enRoute]) {
+      final markers = contractorJobMarkers([job(1,status:status),job(2,status:status),job(3,pin:false)],position:(latitude:31.51,longitude:74.3));
+      expect(markers.map((marker)=>marker['id']), ['self','job-1','job-2']);
+      expect(markers.first['kind'], 'contractor');
+      expect(markers[1]['kind'], status == JobStatus.searching ? 'customer' : 'active');
+      expect(markers[1]['latitude'], job(1).property.pin!.latitude);
+    }
+  });
+  test('only assigned long-term requests enter Available, and the empty map stays usable', () {
+    final jobs = [job(1, bookingType:'long_term', dispatch:'pending_admin'), job(2, bookingType:'long_term', dispatch:'assigned'), job(3)];
+    expect(contractorTabJobs(jobs, ContractorJobTab.available, true).map((job)=>job.id), [2,3]);
+  });
+  test('tabs partition jobs and include legacy pending requests as normal offers', () {
     final jobs = [
       job(1),
       job(2, dispatch: 'assigned'),
@@ -43,7 +58,7 @@ void main() {
         ContractorJobTab.available,
         true,
       ).map((job) => job.id),
-      [1, 2],
+      [1, 2, 3],
     );
     expect(
       contractorTabJobs(
@@ -132,8 +147,8 @@ void main() {
         await tester.ensureVisible(find.text('View job details'));
         await tester.tap(find.text('View job details'));
         expect(opened, 2);
-        await tester.ensureVisible(find.text('Show all'));
-        await tester.tap(find.text('Show all'));
+        await tester.ensureVisible(find.text('Show job pins'));
+        await tester.tap(find.text('Show job pins'));
         await tester.pumpAndSettle();
         expect(find.text('Map selection: null'), findsOneWidget);
         await tester.ensureVisible(find.text('Active (1)'));
@@ -162,15 +177,17 @@ void main() {
               onAvailabilityChanged: (_) {},
               onRefresh: () {},
               onOpen: (_) {},
-              mapBuilder: (_, selected, select) =>
-                  throw StateError('A missing pin must not be mapped'),
+              mapBuilder: (jobs, selected, select) {
+                expect(jobs, isEmpty);
+                return const Text('Map remains visible without job pins');
+              },
             ),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.textContaining('no saved map pins'), findsOneWidget);
+    expect(find.text('Map remains visible without job pins'), findsOneWidget);
     expect(find.byKey(const Key('job-card-1')), findsOneWidget);
   });
 }

@@ -1,3 +1,4 @@
+import 'booking_arrangement_picker.dart';
 import '../../../../core/network/api_client.dart';
 import 'address_search_field.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -644,7 +645,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
       }
       if (differentCity) {
         _lookupMessage =
-            'The lookup suggests $suggestedCity. Your selected city, ${_city.text.trim()}, was kept. Edit City to change the service area.';
+            'The lookup suggests $suggestedCity. Your saved address was kept. You can correct the address below.';
       }
       _selection = result;
       _address.text = [
@@ -707,7 +708,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
   }
 
   Future<void> _updatePin() async {
-    final query = [
+    final query = !_structured ? _address.text.trim() : [
       _street.text,
       _city.text,
       _state.text,
@@ -783,6 +784,12 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
     return null;
   }
 
+  bool get _hasPin {
+    final lat = double.tryParse(_latitude.text);
+    final lng = double.tryParse(_longitude.text);
+    return lat != null && lng != null && lat.isFinite && lng.isFinite && lat.abs() <= 90 && lng.abs() <= 180;
+  }
+
   late String _size = widget.property?.size ?? 'Standard';
 
   @override
@@ -807,7 +814,9 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) {
+    ref.watch(geoCapabilitiesProvider);
+    return AlertDialog(
     title: Text(widget.property == null ? 'Add property' : 'Edit property'),
     content: SizedBox(
       width: 420,
@@ -819,73 +828,50 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
             spacing: EdenSpacing.screen,
             children: [
               _field(_name, 'Property name', required: true),
-              if (!_structured ||
-                  ref
-                          .watch(geoCapabilitiesProvider)
-                          .value?['structuredAddresses'] !=
-                      true) ...[
-                _field(
-                  _address,
-                  'Street address, city, postal code',
-                  required: true,
-                ),
-                TextButton(
-                  onPressed:
-                      ref
-                              .watch(geoCapabilitiesProvider)
-                              .value?['structuredAddresses'] ==
-                          true
-                      ? () => setState(() => _structured = true)
-                      : null,
-                  child: const Text('Add structured address'),
-                ),
-              ] else ...[
-                AddressSearchField(
-                  controller: _street,
-                  label: 'Street address',
-                  required: true,
-                  onEdited: _editedAddress,
-                  onSelected: _fillAddress,
-                ),
-                AddressSearchField(
-                  controller: _city,
-                  label: 'City',
-                  required: true,
-                  citiesOnly: true,
-                  onEdited: _editedAddress,
-                  onSelected: (result) =>
-                      _fillAddress(result, replaceCity: true),
-                ),
-                TextFormField(
-                  controller: _state,
-                  maxLength: 150,
-                  onChanged: (_) => _editedAddress(),
-                  decoration: const InputDecoration(
-                    labelText: 'Province / state',
-                  ),
-                ),
-                TextFormField(
-                  controller: _postal,
-                  maxLength: 30,
-                  onChanged: (_) => _editedAddress(),
-                  decoration: const InputDecoration(
-                    labelText: 'Postal code (optional)',
-                  ),
-                ),
-                TextFormField(
-                  controller: _country,
-                  maxLength: 100,
-                  onChanged: (_) => _editedAddress(),
-                  validator: (value) =>
-                      (value ?? '').trim().isEmpty ? 'Enter country' : null,
-                  decoration: const InputDecoration(labelText: 'Country'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _lookingUp ? null : _updatePin,
-                  icon: const Icon(Icons.location_searching),
-                  label: const Text('Update pin from address'),
-                ),
-              ],
+              OutlinedButton.icon(
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Choose pin on map'),
+                onPressed: () async {
+                  final lat = double.tryParse(_latitude.text);
+                  final lng = double.tryParse(_longitude.text);
+                  final valid =
+                      lat != null &&
+                      lng != null &&
+                      lat.abs() <= 90 &&
+                      lng.abs() <= 180;
+                  final pin = await showCustomerDialog<LatLng>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: const Text('Property location'),
+                      scrollable: true,
+                      content: SizedBox(
+                        width: 560,
+                        child: PropertyMap(
+                          initial: valid
+                              ? LatLng(lat, lng)
+                              : const LatLng(43.6532, -79.3832),
+                          editable: true,
+                          locateOnOpen: !valid,
+                        ),
+                      ),
+                    ),
+                  );
+                  if (!mounted || pin == null) return;
+                  _latitude.text = pin.latitude.toStringAsFixed(6);
+                  _longitude.text = pin.longitude.toStringAsFixed(6);
+                  await _reverse(pin.latitude, pin.longitude);
+                },
+              ),
+              if (_hasPin) Text('Pin saved: ${_latitude.text}, ${_longitude.text}', style: Theme.of(context).textTheme.bodySmall),
+              TextFormField(
+                controller: _address,
+                maxLength: 250,
+                maxLines: 2,
+                onChanged: (_) { _structured = false; _editedAddress(); },
+                validator: (value) => (value ?? '').trim().isEmpty && !_hasPin ? 'Choose a map pin or enter an address.' : null,
+                decoration: const InputDecoration(labelText: 'Address / directions (optional)', helperText: 'Filled from your pin. You can correct it here.'),
+              ),
+              OutlinedButton.icon(onPressed: _lookingUp || _address.text.trim().length < 3 ? null : _updatePin, icon: const Icon(Icons.location_searching), label: const Text('Update pin from address')),
               if (_lookingUp) const LinearProgressIndicator(),
               if (_lookupMessage != null) Text(_lookupMessage!),
               DropdownButtonFormField<String>(
@@ -951,40 +937,6 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                 ),
                 validator: (value) => _coordinate(value, 180, _latitude),
               ),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.map_outlined),
-                label: const Text('Choose pin on map'),
-                onPressed: () async {
-                  final lat = double.tryParse(_latitude.text);
-                  final lng = double.tryParse(_longitude.text);
-                  final valid =
-                      lat != null &&
-                      lng != null &&
-                      lat.abs() <= 90 &&
-                      lng.abs() <= 180;
-                  final pin = await showCustomerDialog<LatLng>(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: const Text('Property location'),
-                      scrollable: true,
-                      content: SizedBox(
-                        width: 560,
-                        child: PropertyMap(
-                          initial: valid
-                              ? LatLng(lat, lng)
-                              : const LatLng(43.6532, -79.3832),
-                          editable: true,
-                          locateOnOpen: !valid,
-                        ),
-                      ),
-                    ),
-                  );
-                  if (!mounted || pin == null) return;
-                  _latitude.text = pin.latitude.toStringAsFixed(6);
-                  _longitude.text = pin.longitude.toStringAsFixed(6);
-                  await _reverse(pin.latitude, pin.longitude);
-                },
-              ),
               if (_photo case final photo?) DemoImage(photo),
               OutlinedButton.icon(
                 icon: const Icon(Icons.add_a_photo_outlined),
@@ -1014,11 +966,11 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
                     .save(
                       widget.property?.id,
                       _name.text.trim(),
-                      _address.text.trim(),
+                      _address.text.trim().isNotEmpty ? _address.text.trim() : 'Pinned location (${_latitude.text}, ${_longitude.text})',
                       _size,
                       _notes.text.trim(),
                       structuredAddress:
-                          _structured &&
+                          _structured && _street.text.trim().isNotEmpty && _city.text.trim().isNotEmpty && _country.text.trim().isNotEmpty &&
                               ref
                                       .read(geoCapabilitiesProvider)
                                       .value?['structuredAddresses'] ==
@@ -1055,6 +1007,7 @@ class _PropertyEditorState extends ConsumerState<_PropertyEditor> {
       ),
     ],
   );
+  }
 }
 
 Widget _field(
@@ -1086,7 +1039,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   final _notes = TextEditingController();
   DateTime? _scheduled;
   bool _urgent = false;
-  bool _recurring = false;
+  String _bookingType = 'one_time';
   bool _walkway = false;
   String _snowDepth = 'light';
   final Set<String> _addOnIds = {};
@@ -1144,13 +1097,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         ],
       );
     }
-    final service = options.containsKey(_service)
-        ? _service
-        : options.keys.first;
+    final service = options.keys.where((value) => value == _service).firstOrNull ?? options.keys.first;
     final addons = ref.watch(addOnsProvider);
-    final details =
-        ref.watch(serviceDetailsProvider).value ??
-        const <Map<String, dynamic>>[];
     final quoteState = ref.watch(
       quoteProvider(
         jsonEncode({
@@ -1189,7 +1137,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                   DropdownMenuItem(
                     value: service,
                     child: Text(
-                      '${service.label}${details.where((row) => row['id'] == service.name).firstOrNull?['service_category'] == 'large' ? ' · Large project' : ''}',
+                      service.label,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -1215,12 +1163,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               value: _urgent,
               onChanged: (value) => setState(() => _urgent = value),
             ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Weekly service preference'),
-              value: _recurring,
-              onChanged: (value) => setState(() => _recurring = value),
-            ),
+            BookingArrangementPicker(value: _bookingType, onChanged: (value) => setState(() => _bookingType = value)),
             if (service == Service.snow)
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
@@ -1333,6 +1276,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(service.label),
+                              Text(_bookingType == 'long_term' ? 'Long-term request · admin assignment' : 'One-time service'),
                               Text(property.name),
                               Text(property.fullAddress),
                               PropertyMeasurements(property),
@@ -1375,7 +1319,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                               if (_notes.text.trim().isNotEmpty)
                                 _notes.text.trim(),
                             ].join(' '),
-                            _recurring,
+                            false,
+                            bookingType: _bookingType,
                             referencePhoto: _referencePhoto,
                             urgent: _urgent,
                             walkway: _walkway,
@@ -1443,7 +1388,7 @@ class BookingListScreen extends ConsumerWidget {
             bookings: bookings,
             onOpen: (booking) => context.push('/bookings/${booking.id}'),
             onRefresh: () => ref.read(bookingsProvider.notifier).refresh(),
-            onBrowse: () => context.go('/customer-home'),
+            onBrowse: () => context.push('/explore-services'),
           ),
         ],
       );
@@ -1933,6 +1878,7 @@ class BookingDetailsScreen extends ConsumerWidget {
             ),
             Text(bookingDateLabel(booking)),
             Text('${_money.format(booking.total)} CAD'),
+            if (booking.bookingType == 'long_term') Text(booking.dispatchStatus == 'pending_admin' ? 'Long-term request · awaiting Eden assignment' : 'Long-term request · assigned by Eden'),
             if (booking.recurring) const Text('Weekly service requested'),
             if (booking.property.pin case final pin?)
               if (contractor)

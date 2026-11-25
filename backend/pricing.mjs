@@ -57,6 +57,7 @@ export function createPricing(db) {
     if (user.role !== 'customer') fail(403,'Switch to customer mode.');
     if (!Number.isInteger(input.propertyId) || typeof input.service !== 'string' ||
       input.service.length > 20 || (input.couponCode != null && (typeof input.couponCode !== 'string' || input.couponCode.length > 40))) fail(400,'Choose a valid property, service and coupon.');
+    if(input.bookingType!=null&&!['one_time','long_term'].includes(input.bookingType))fail(400,'Choose one-time or long-term service.');
     for (const flag of ['urgent','walkway','discount']) if (input[flag] != null && typeof input[flag] !== 'boolean') fail(400,'Invalid booking option.');
     bookingSchedule(input,false);
     const [[selected]] = await connection.execute('SELECT * FROM properties WHERE id=? AND owner=?',[input.propertyId,user.id]);
@@ -111,23 +112,25 @@ export function createPricing(db) {
     },
     async place(user,input,validated) {
       const schedule=bookingSchedule(input);
+      const bookingType=input.bookingType ?? 'one_time';
+      if(!['one_time','long_term'].includes(bookingType))fail(400,'Choose one-time or long-term service.');
       const c=await db.getConnection();
       try {
         await c.beginTransaction();
         const {breakdown,property,service}=await quote(c,user,input,true);
         if (input.expectedTotalCents != null && input.expectedTotalCents!==breakdown.totalCents) fail(409,'The quote changed. Review the updated total before booking.');
-        const details={...validated,...schedule,property,service:service.id,total:breakdown.totalCents/100,breakdown,
+        const details={...validated,...schedule,bookingType,...(bookingType==='long_term'?{recurring:false}:{}),property,service:service.id,total:breakdown.totalCents/100,breakdown,
           options:{urgent:input.urgent===true,walkway:input.walkway===true,snowDepth:input.snowDepth??null,addOnIds:input.addOnIds??[]}};
-        const dispatchStatus = service.service_category === 'large' ? 'pending_admin' : 'open';
+        const dispatchStatus = bookingType === 'long_term' ? 'pending_admin' : 'open';
         const [result]=await c.execute('INSERT INTO bookings (customer_id,details,service_category,quoted_total_cents,currency,dispatch_status) VALUES (?,?,?,?,?,?)',
-          [user.id,JSON.stringify(details),service.service_category,breakdown.totalCents,breakdown.currency,dispatchStatus]);
+          [user.id,JSON.stringify({...details,serviceTitle:service.title}),service.service_category,breakdown.totalCents,breakdown.currency,dispatchStatus]);
         if(breakdown.couponCode) {
           const [used]=await c.execute('UPDATE coupons SET uses=uses+1 WHERE code=? AND (max_uses IS NULL OR uses<max_uses)',[breakdown.couponCode]);
           if(!used.affectedRows) fail(409,'This promo code has been used up.');
           await c.execute('INSERT INTO coupon_redemptions (booking_id,coupon_code,customer_id) VALUES (?,?,?)',[result.insertId,breakdown.couponCode,user.id]);
         }
         await c.commit();
-        return {...details,id:result.insertId,status:'searching',version:0,service_category:service.service_category,quoted_total_cents:breakdown.totalCents,currency:breakdown.currency};
+        return {...details,serviceTitle:service.title,id:result.insertId,status:'searching',version:0,dispatch_status:dispatchStatus,service_category:service.service_category,quoted_total_cents:breakdown.totalCents,currency:breakdown.currency};
       } catch(e) {await c.rollback();throw e;} finally {c.release();}
     },
   };

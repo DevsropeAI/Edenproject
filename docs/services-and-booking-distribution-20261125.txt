@@ -1,0 +1,103 @@
+EDEN: ADMIN-MANAGED SERVICES AND BOOKING DISTRIBUTION
+
+Implemented
+- Admin Services creation/editing now has exactly three fields: service name, price, and Active/Inactive. Other stored metadata is retained without being exposed as extra form fields. Names are limited to 80 characters to fit the existing contractor primary-service column. Prices are validated as integer cents on the backend.
+- Flutter loads arbitrary service IDs from the active catalog. Old and inactive-service order history still decodes, and new bookings save their service title. Catalog lists refresh every 30 seconds while watched.
+- Small/large controls, lead filters, badges and category-based dispatch are retired. Historical columns/snapshots and an empty LargeJobs response key remain for compatibility; no columns were dropped.
+- Posting offers One-time or Long-term/recurring request. One-time offers cross all cities and service specialties. Existing unaccepted legacy pending jobs become public offers. Existing explicit assignments remain private to their assignee.
+- Availability, verification before acceptance, ownership, prior declines/releases, and optimistic conflict checks remain enforced. Contractors cannot accept their own customer bookings.
+- Long-term requests appear in admin > Long-term requests. An admin can assign any active contractor regardless of city or specialty. Only that contractor receives the invitation. Decline/release/cancel returns a long-term request to admin.
+- Long-term means an admin-managed request; no repeat frequency was specified, so this does not silently create a weekly schedule. The pre-existing weekly-booking system is unchanged.
+- Contractor web dashboard always renders its map, including when there are no job pins. It requests the device location, displays a blue self marker and initially centers nearby. Global job pins remain available by panning/zooming; cards sort nearest first when a location is available. Pin/card selection still opens the existing job flow. Location failure leaves map browsing available with a retry action.
+- Available-job previews include customer display name when available, saved address and existing job requirements. Existing photo restrictions are unchanged.
+
+UI corrections after review
+- Long-term requests use a responsive job-details grid and a separate assignment panel. Yard flags are readable Included/Not included values; irrelevant sizes are hidden.
+- Customer home now links to /explore-services instead of rendering the entire catalog below bookings. The separate page preserves active catalog loading, retry/empty states and existing property/booking navigation.
+- Property forms no longer show separate Street address and City search boxes. The map picker appears near the top, with one optional address/directions correction box. Existing structured address data remains stored, and a confirmed pin can save even when lookup cannot provide an address. Manually corrected combined addresses are displayed consistently.
+- Available and Active map tabs have an enabled Show job pins control to fit all saved job locations. Blue self circles and red pin tips use different anchors so both remain distinguishable at the same coordinate. No coordinates are shifted or invented.
+
+Latest contractor pin/overview changes
+- Contractor marketplace maps open with all job pins plus the current GPS marker in view. Changing tabs also opens an overview. Selecting a job still zooms to it; the location button can focus the contractor. Show job pins remains available and can be used repeatedly after manual panning.
+- Contractor registration replaces the general city search with the existing Google Maps pin picker and current-location action. A work pin is required in the new registration interface. Legacy API registrations remain compatible.
+- Profile > Edit profile > Work location uses the same picker. Click Save work location after choosing a new pin. The endpoint saves and reloads the signed-in contractor's work pin.
+- Work pins use the existing preferences.details JSON, merged without replacing notifications/availability. Registration inserts the account and pin inside one transaction. Coordinates are validated server-side; customer accounts cannot use contractor pin endpoints.
+- Admin maps can use saved work pins as an explicitly labeled fallback. Saved pins are not represented as live GPS. Existing work-city metadata remains intact for compatibility.
+- Admin service name, price and status controls have matching medium widths instead of full-row name inputs.
+- No migration or new database column/environment variable is needed. No actual database writes, deployed operations or Git pushes were performed.
+- Testing: restart the backend, restart/hot-restart Flutter, register a contractor with a chosen pin, sign in and reload Profile work location, change the pin and save it, then reload again. Check map overview on Available and Active without clicking Show job pins, then pan and click the button twice to verify refitting.
+
+API
+- NEW: POST /api/admin/services (admin only).
+- EXTENDED: POST /api/admin/services/:id (metadata and rename; primary-service labels updated transactionally).
+- REUSED: POST /api/admin/dispatch/:id now assigns long-term requests, independently of service category.
+- EXTENDED: booking creation accepts bookingType=one_time|long_term; absent values default to one_time. The value is stored in existing details JSON. Quotes/prices are still server controlled.
+- EXTENDED: admin dashboard LongTermJobs; contractor booking/map responses use global public-offer visibility and private assignment rules.
+
+Database/config safety
+- No migrations, seeds, backups, database connections/writes, deployed operations, account/grant changes, commits or pushes were performed.
+- Reuses the existing service/pricing/dispatch schema. No new environment settings or Google keys are needed for these additions.
+
+Validation
+- Next.js production build: passed.
+- Flutter web release build: passed (compilation check; not a deployment-specific API build).
+- All 41 Flutter tests: passed.
+- Backend: 101 passed, 0 failed, 1 existing database integration test skipped.
+- 48 original-service pricing combinations match committed production calculations. Corrected the regression test's floating-point expected values using historical integer-cent golden totals; production calculations were not altered.
+- Flutter analyzer reports existing lint warnings; no compilation errors were found.
+
+Manual tests after restarting backend/admin/Flutter
+1. Admin > Services > Add service. Create an active Window Cleaning service with a base price. Refresh customer home (or wait up to 30 seconds) and verify it appears.
+2. Book that service as One-time using a customer account. Use a different contractor account with another work city/specialty; turn availability on. The job/card/pin must appear and be acceptable after normal verification.
+3. Create a Long-term/recurring request. It must be absent from other contractors, present in admin > Long-term requests. Assign a contractor; only that contractor receives it. Accept and progress it normally.
+4. Decline an assigned long-term invitation, or release/cancel it at the permitted stage. Verify it returns to admin and is not publicly offered. Reassign and accept again.
+5. With no available jobs, the contractor map remains visible. Allow location on localhost or HTTPS; verify the blue self pin and nearby initial view. Pan/zoom to distant jobs. Test denied permission/retry and pin/card selection.
+6. Rename or deactivate a service in admin. Verify current catalog updates and old booking titles/totals remain readable. Check registration/profile service choices.
+7. Check existing tracking, chat unread indicators, customer progress notifications, editing/deleting unaccepted jobs, confirmation dialogs, maps, original three quotes and EDEN10.
+
+Not verified against live UI/data
+- No real database inserts/assignments or live Google Maps permission flow were exercised here. Please complete the above smoke tests locally before pushing.
+- Android/iOS runtime behavior was not tested; the redesigned contractor browser/map in this change follows the existing Flutter web dashboard path.
+
+Files changed/added
+- admin/app/actions.js
+- admin/app/dashboard.js
+- admin/app/globals.css
+- admin/app/map-utils.mjs
+- admin/app/marketplace-map.js
+- admin/app/page.js
+- backend/addresses.test.mjs
+- backend/admin-dashboard.test.mjs
+- backend/booking-distribution.test.mjs
+- backend/catalog-routes.mjs
+- backend/catalog-services.test.mjs
+- backend/long-term-dispatch.mjs
+- backend/map-data.mjs
+- backend/marketplace.mjs
+- backend/marketplace.test.mjs
+- backend/pricing.mjs
+- backend/pricing.test.mjs
+- backend/server.mjs
+- backend/work-pin.mjs
+- backend/work-pin.test.mjs
+- docs/services-and-booking-distribution-20261125.txt
+- lib/core/router/app_router.dart
+- lib/features/auth/presentation/screens/account_form_screen.dart
+- lib/features/home/marketplace.dart
+- lib/features/home/presentation/screens/booking_arrangement_picker.dart
+- lib/features/home/presentation/screens/contractor_jobs_browser.dart
+- lib/features/home/presentation/screens/customer_home_screen.dart
+- lib/features/home/presentation/screens/explore_services_screen.dart
+- lib/features/home/presentation/screens/google_marketplace_canvas.dart
+- lib/features/home/presentation/screens/marketplace_map.dart
+- lib/features/home/presentation/screens/marketplace_screens.dart
+- lib/features/home/presentation/screens/mode_switch_tile.dart
+- lib/features/home/presentation/screens/work_location_editor.dart
+- lib/features/home/presentation/screens/work_location_pin_field.dart
+- test/booking_arrangement_picker_test.dart
+- test/contractor_jobs_browser_test.dart
+- test/dynamic_services_test.dart
+- test/explore_services_test.dart
+- test/marketplace_map_layout_test.dart
+- test/property_pin_form_test.dart
+- test/work_location_pin_field_test.dart

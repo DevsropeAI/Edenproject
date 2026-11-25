@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:geolocator/geolocator.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -23,7 +25,8 @@ List<Booking> contractorTabJobs(
   return switch (tab) {
     ContractorJobTab.available =>
       job.status == JobStatus.searching &&
-          !['pending_admin', 'rejected'].contains(job.dispatchStatus) &&
+          job.dispatchStatus != 'rejected' &&
+          (job.bookingType != 'long_term' || job.dispatchStatus == 'assigned') &&
           (available || job.dispatchStatus == 'assigned'),
     ContractorJobTab.active => ![
       JobStatus.searching,
@@ -34,6 +37,16 @@ List<Booking> contractorTabJobs(
     ContractorJobTab.cancelled => job.status == JobStatus.cancelled,
   };
 }).toList();
+
+List<Map<String, dynamic>> contractorJobMarkers(List<Booking> jobs, {({double latitude, double longitude})? position}) => [
+  if (position != null) {'id':'self','kind':'contractor','title':'Your location','online':true,'latitude':position.latitude,'longitude':position.longitude},
+  for (final job in jobs.where((job)=>job.property.pin != null)) {
+    'id':'job-${job.id}', 'bookingId':job.id,
+    'kind': job.status == JobStatus.completed ? 'completed' : job.status == JobStatus.searching ? 'customer' : 'active',
+    'title':job.service.label, 'detail':job.property.fullAddress,
+    'latitude':job.property.pin!.latitude, 'longitude':job.property.pin!.longitude,
+  },
+];
 
 typedef ContractorMapBuilder = Widget Function(
   List<Booking> jobs,
@@ -65,21 +78,54 @@ class ContractorJobsBrowser extends StatefulWidget {
 class _ContractorJobsBrowserState extends State<ContractorJobsBrowser> {
   ContractorJobTab _tab = ContractorJobTab.available;
   int? _selectedId;
+  bool _showAllPins = true;
+  int _cameraRevision = 0;
   final _scroll = ScrollController();
   double _cardExtent = 300;
+  Position? _position;
+  bool _locating = false;
+  String? _locationMessage;
+  @override
+  void initState() {
+    super.initState();
+    if (widget.mapBuilder == null) _locate(overview: true);
+  }
+  Future<void> _locate({bool overview = false}) async {
+    if (_locating) return;
+    setState(() { _locating = true; _locationMessage = null; _showAllPins = overview; _selectedId = null; _cameraRevision++; });
+    try {
+      if (!kIsWeb) {
+        var permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) throw StateError('permission');
+      }
+      final position = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 15)));
+      if (mounted) setState(() => _position = position);
+    } catch (_) {
+      if (mounted) setState(() => _locationMessage = 'Your location is unavailable. Allow location access, then retry. You can still explore the map and jobs.');
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
   late Future<Map<String, dynamic>> _config = _loadConfig();
   Future<Map<String, dynamic>> _loadConfig() async => Map<String, dynamic>.from(
     jsonDecode(await rootBundle.loadString('shared/map_markers.json')) as Map,
   );
-  List<Booking> get _jobs =>
-      contractorTabJobs(widget.jobs, _tab, widget.available);
+  List<Booking> get _jobs {
+    final jobs = contractorTabJobs(widget.jobs, _tab, widget.available);
+    if (_position != null && _tab == ContractorJobTab.available) {
+      double distance(Booking job) => job.property.pin == null ? double.infinity : Geolocator.distanceBetween(_position!.latitude, _position!.longitude, job.property.pin!.latitude, job.property.pin!.longitude);
+      jobs.sort((a,b) { final order = distance(a).compareTo(distance(b)); return order == 0 ? b.id.compareTo(a.id) : order; });
+    }
+    return jobs;
+  }
   Booking? get _selected =>
       _jobs.where((job) => job.id == _selectedId).firstOrNull;
 
   void _select(int id, {bool scroll = false}) {
     final index = _jobs.indexWhere((job) => job.id == id);
     if (index < 0) return;
-    setState(() => _selectedId = id);
+    setState(() { _selectedId = id; _showAllPins = false; });
     if (scroll && _scroll.hasClients) {
       _scroll.animateTo(
         (index * _cardExtent).clamp(0, _scroll.position.maxScrollExtent),
@@ -103,24 +149,6 @@ class _ContractorJobsBrowserState extends State<ContractorJobsBrowser> {
 
   Widget _map(List<Booking> jobs) {
     final pinned = jobs.where((job) => job.property.pin != null).toList();
-    if (pinned.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(EdenSpacing.section),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.map_outlined, size: EdenSpacing.target),
-              const SizedBox(height: EdenSpacing.gap),
-              Text(
-                jobs.isEmpty ? 'No jobs to map in this tab.' : 'These jobs have no saved map pins. You can still open their details.',
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
     if (widget.mapBuilder != null) {
       return widget.mapBuilder!(
         pinned,
@@ -143,26 +171,16 @@ class _ContractorJobsBrowserState extends State<ContractorJobsBrowser> {
           return const Center(child: CircularProgressIndicator());
         }
         return GoogleMarketplaceCanvas(
+          key: ValueKey(_position?.timestamp),
           config: config.requireData,
+          initialLocation: _position == null ? null : (latitude: _position!.latitude, longitude: _position!.longitude),
           selectedId: _selectedId == null ? null : 'job-$_selectedId',
-          markers: [
-            for (final job in pinned)
-              {
-                'id': 'job-${job.id}',
-                'bookingId': job.id,
-                'kind': job.status == JobStatus.completed
-                    ? 'completed'
-                    : job.status == JobStatus.searching
-                    ? (job.serviceCategory == 'large' ? 'large' : 'customer')
-                    : 'active',
-                'title': job.service.label,
-                'detail': job.property.fullAddress,
-                'latitude': job.property.pin!.latitude,
-                'longitude': job.property.pin!.longitude,
-              },
-          ],
-          onSelected: (marker) =>
-              _select(marker['bookingId'] as int, scroll: true),
+          fitAllMarkers: _showAllPins,
+          cameraRevision: _cameraRevision,
+          markers: contractorJobMarkers(pinned, position: _position == null ? null : (latitude: _position!.latitude, longitude: _position!.longitude)),
+          onSelected: (marker) {
+            if (marker['bookingId'] case final int id) _select(id, scroll: true);
+          },
         );
       },
     );
@@ -186,7 +204,7 @@ class _ContractorJobsBrowserState extends State<ContractorJobsBrowser> {
                   Text('Find your next job', style: text.titleLarge),
                   Text(
                     widget.available
-                        ? 'Available for matching jobs'
+                        ? 'One-time jobs · all cities and services'
                         : 'Offline · assigned jobs stay visible',
                     style: text.bodySmall,
                   ),
@@ -224,6 +242,7 @@ class _ContractorJobsBrowserState extends State<ContractorJobsBrowser> {
                     selected: _tab == tab,
                     onSelected: (_) => setState(() {
                       _tab = tab;
+                      _showAllPins = true;
                       _selectedId = null;
                       if (_scroll.hasClients) _scroll.jumpTo(0);
                     }),
@@ -233,6 +252,7 @@ class _ContractorJobsBrowserState extends State<ContractorJobsBrowser> {
           ),
         ),
         const SizedBox(height: EdenSpacing.screen),
+        Row(children: [Expanded(child: Text(_locating ? 'Finding your location…' : _locationMessage ?? 'Your blue marker shows your current location.', style: text.bodySmall)), IconButton(onPressed: _locating ? null : () => _locate(), tooltip: 'Use my current location', icon: const Icon(Icons.my_location))]),
         ClipRRect(
           borderRadius: BorderRadius.circular(EdenRadius.card),
           child: AnimatedContainer(
@@ -250,15 +270,15 @@ class _ContractorJobsBrowserState extends State<ContractorJobsBrowser> {
             children: [
               Expanded(
                 child: Text(
-                  'Tap a pin or choose a job below',
+                  'Blue: you · Red: job locations',
                   style: text.bodySmall,
                 ),
               ),
               TextButton(
-                onPressed: selected == null
-                    ? null
-                    : () => setState(() => _selectedId = null),
-                child: const Text('Show all'),
+                onPressed: jobs.any((job) => job.property.pin != null)
+                    ? () => setState(() { _selectedId = null; _showAllPins = true; _cameraRevision++; })
+                    : null,
+                child: const Text('Show job pins'),
               ),
             ],
           ),
@@ -400,6 +420,7 @@ class _ContractorJobsBrowserState extends State<ContractorJobsBrowser> {
                   children: [
                     Text(selected.service.label, style: text.titleLarge),
                     const SizedBox(height: EdenSpacing.sm),
+                    if (selected.customerName case final name?) Text('Customer: $name'),
                     Text(selected.property.fullAddress),
                     const SizedBox(height: EdenSpacing.sm),
                     Text(

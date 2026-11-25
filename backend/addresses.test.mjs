@@ -37,13 +37,13 @@ test('eligible unaccepted contractor receives approved location, instructions an
   }
 });
 
-test('matching uses both city IDs instead of legacy area and rejects a different city', async () => {
+test('public offers cross city boundaries while saved address fields remain intact', async () => {
   const request = {
     method: 'GET', path: '/api/bookings', addressStore: {},
     run: async () => [{ id: 10, status: 'searching', contractor_id: null, details }],
   };
   assert.equal((await marketplace({ ...request, user: contractor })).length, 1);
-  assert.equal((await marketplace({ ...request, user: { ...contractor, area: 'Lahore', city_id: 8 } })).length, 0);
+  assert.equal((await marketplace({ ...request, user: { ...contractor, area: 'Lahore', city_id: 8 } })).length, 1);
   const legacyDetails = { ...details, property: { ...details.property, cityId: null } };
   assert.equal((await marketplace({
     ...request, user: { ...contractor, area: 'Lahore' },
@@ -62,7 +62,7 @@ test('exact locations remain restricted to eligible offers and the admin-assigne
   const offers = await marketplace({
     method: 'GET', path: '/api/bookings', user: contractor, addressStore: {}, run: async () => rows,
   });
-  assert.deepEqual(offers.map(row => row.id), [3, 4]);
+  assert.deepEqual(offers.map(row => row.id), [1, 3, 4]);
   for (const offer of offers) {
     assert.deepEqual(offer.property.pin, details.property.pin);
     assert.equal(offer.property.photo, null);

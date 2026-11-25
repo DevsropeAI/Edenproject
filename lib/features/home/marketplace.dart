@@ -9,34 +9,42 @@ import '../auth/data/repositories/auth_repository.dart';
 import '../auth/domain/auth_state.dart';
 import '../auth/providers/auth_provider.dart';
 
-enum Service {
-  snow('Snow Removal', 45),
-  lawn('Lawn Mowing', 30),
-  cleaning('House Cleaning', 85),
-  drivewaySnow('Driveway Snow Clearing', 40),
-  walkwayClear('Walkway Clearing', 20),
-  entranceClear('Front Entrance Clearing', 25),
-  leaf('Leaf Removal', 40),
-  tree('Tree Trimming', 75),
-  landscaping('Landscaping', 80),
-  yard('Yard Cleaning', 50),
-  pressure('Pressure Washing', 90),
-  gutter('Gutter Cleaning', 65),
-  hardscaping('Hardscaping', 300),
-  paver('Paver Installation', 400),
-  drivewayBuild('Driveway Construction', 500),
-  walkwayBuild('Walkway Construction', 250),
-  retainingWall('Retaining Wall Installation', 450);
-
-  const Service(this.label, this.price);
-  final String label;
+/// Service IDs are stable; the active catalog is managed by administrators.
+class Service {
+  const Service._(this.name, this._label, this.price);
+  final String name;
+  final String _label;
   final int price;
-  bool get isSnow => [
-    Service.snow,
-    Service.drivewaySnow,
-    Service.walkwayClear,
-    Service.entranceClear,
-  ].contains(this);
+  String get label => _label;
+  static const snow = Service._('snow', 'Snow Removal', 45);
+  static const lawn = Service._('lawn', 'Lawn Mowing', 30);
+  static const cleaning = Service._('cleaning', 'House Cleaning', 85);
+  static const drivewaySnow = Service._('drivewaySnow', 'Driveway Snow Clearing', 40);
+  static const walkwayClear = Service._('walkwayClear', 'Walkway Clearing', 20);
+  static const entranceClear = Service._('entranceClear', 'Front Entrance Clearing', 25);
+  static const leaf = Service._('leaf', 'Leaf Removal', 40);
+  static const tree = Service._('tree', 'Tree Trimming', 75);
+  static const landscaping = Service._('landscaping', 'Landscaping', 80);
+  static const yard = Service._('yard', 'Yard Cleaning', 50);
+  static const pressure = Service._('pressure', 'Pressure Washing', 90);
+  static const gutter = Service._('gutter', 'Gutter Cleaning', 65);
+  static const hardscaping = Service._('hardscaping', 'Hardscaping', 300);
+  static const paver = Service._('paver', 'Paver Installation', 400);
+  static const drivewayBuild = Service._('drivewayBuild', 'Driveway Construction', 500);
+  static const walkwayBuild = Service._('walkwayBuild', 'Walkway Construction', 250);
+  static const retainingWall = Service._('retainingWall', 'Retaining Wall Installation', 450);
+  static const values = [snow, lawn, cleaning, drivewaySnow, walkwayClear, entranceClear, leaf, tree, landscaping, yard, pressure, gutter, hardscaping, paver, drivewayBuild, walkwayBuild, retainingWall];
+  static Service fromId(String id, {String? title}) {
+    for (final value in values) {
+      if (value.name == id) return title == null ? value : Service._(id, title, value.price);
+    }
+    return Service._(id, title ?? id, 0);
+  }
+  bool get isSnow => [snow, drivewaySnow, walkwayClear, entranceClear].contains(this);
+  @override
+  bool operator ==(Object other) => other is Service && other.name == name;
+  @override
+  int get hashCode => name.hashCode;
 }
 
 enum JobStatus {
@@ -82,7 +90,7 @@ class Property {
   final Map<String, dynamic> structuredAddress;
   final Map<String, dynamic> measurements;
   final int? cityId;
-  String get fullAddress => structuredAddress.isEmpty
+  String get fullAddress => address.trim().isNotEmpty
       ? address
       : ['street', 'city', 'state', 'postalCode', 'country']
             .map((key) => structuredAddress[key] as String? ?? '')
@@ -156,6 +164,8 @@ class Booking {
     required this.total,
     required this.notes,
     this.recurring = false,
+    this.bookingType = 'one_time',
+    this.customerName,
     this.paused = false,
     this.referencePhoto,
     this.status = JobStatus.searching,
@@ -185,6 +195,8 @@ class Booking {
   final double total;
   final String notes;
   final bool recurring;
+  final String bookingType;
+  final String? customerName;
   final bool paused;
   final Uint8List? referencePhoto;
   final JobStatus status;
@@ -211,7 +223,7 @@ class Booking {
   factory Booking.fromJson(Map<String, dynamic> json) => Booking(
     id: json['id'] as int,
     property: Property.fromJson(json['property'] as Map<String, dynamic>),
-    service: Service.values.byName(json['service'] as String),
+    service: Service.fromId(json['service'] as String, title: json['serviceTitle'] as String?),
     date: DateTime.parse(json['date'] as String).toLocal(),
     scheduledDate: json['scheduledDate'] as String?,
     dispatchStatus: json['dispatch_status'] as String?,
@@ -222,6 +234,8 @@ class Booking {
     notes: json['notes'] as String,
     status: JobStatus.values.byName(json['status'] as String),
     recurring: json['recurring'] == true,
+    bookingType: json['bookingType'] as String? ?? 'one_time',
+    customerName: json['customerName'] as String?,
     paused: json['paused'] == true,
     referencePhoto: _decodeImage(json['referencePhoto']),
     before: _decodeImage(json['before']),
@@ -271,6 +285,8 @@ class Booking {
     total: total,
     notes: notes,
     recurring: recurring,
+    bookingType: bookingType,
+    customerName: customerName,
     paused: paused,
     referencePhoto: referencePhoto,
     status: status ?? this.status,
@@ -316,17 +332,21 @@ final _marketplaceModeProvider = Provider(
 final serviceCatalogProvider = FutureProvider.autoDispose<Map<Service, int>>((
   ref,
 ) async {
+  final timer = Timer(const Duration(seconds: 30), ref.invalidateSelf);
+  ref.onDispose(timer.cancel);
   final response = await ref.watch(apiClientProvider).get('/services');
   return {
     for (final service in response.data as List)
-      Service.values.byName(service['id'] as String):
+      Service.fromId(service['id'] as String, title: service['title'] as String):
           service['priceCents'] as int,
   };
 });
 
 final serviceDetailsProvider =
     FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
-      final response = await ref.watch(apiClientProvider).get('/services');
+      final timer = Timer(const Duration(seconds: 30), ref.invalidateSelf);
+  ref.onDispose(timer.cancel);
+  final response = await ref.watch(apiClientProvider).get('/services');
       return (response.data as List)
           .map((row) => Map<String, dynamic>.from(row as Map))
           .toList();
@@ -522,6 +542,7 @@ class Bookings extends MarketplaceRecords<Booking> {
     DateTime date,
     String notes,
     bool recurring, {
+    String bookingType = 'one_time',
     Uint8List? referencePhoto,
     bool urgent = false,
     bool walkway = false,
@@ -540,6 +561,7 @@ class Bookings extends MarketplaceRecords<Booking> {
         'utcOffsetMinutes': DateTime.now().timeZoneOffset.inMinutes,
         'notes': notes,
         'recurring': recurring,
+        'bookingType': bookingType,
         'referencePhoto': _encodeImage(referencePhoto),
         'urgent': urgent,
         'walkway': walkway,

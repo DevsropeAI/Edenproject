@@ -215,3 +215,42 @@ nav a:focus-visible { outline-color: var(--accent); }
   .map-filter-chips button { padding:9px 12px; }
   .map-results span { width:100%; }
 }
+
+.service-create { margin: 24px 0; padding: 24px; border: 1px solid var(--border, #454545); border-radius: 24px; }
+.service-create summary { cursor: pointer; font-weight: 600; padding: 12px 0; }
+.service-fields { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); width: 100%; }
+.service-fields label { display: grid; gap: 8px; min-width: 0; }
+.service-fields input, .service-fields textarea, .service-fields select { width: 100%; box-sizing: border-box; }
+.record-actions:has(.service-fields) { flex-wrap: wrap; flex: 1; max-width: 850px; }
+
+.long-term-request { margin-top: 24px; border: 1px solid var(--border); border-radius: 24px; overflow: hidden; background: var(--canvas); }
+.long-term-request .request-heading { display:flex; justify-content:space-between; align-items:start; gap:16px; margin:0; padding:24px; border-radius:0; background:var(--sidebar); }
+.request-heading h3 { margin:8px 0; font-size:26px; }
+.request-heading p { margin:0; color:var(--text-muted); overflow-wrap:anywhere; }
+.request-eyebrow,.request-number { color:var(--accent); font-size:13px; }
+.request-content { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(240px,1fr); gap:32px; padding:24px; }
+.request-content h4 { font-family:var(--font-body); font-size:16px; margin:0 0 16px; }
+.request-address { color:var(--text-muted); line-height:1.6; overflow-wrap:anywhere; }
+.request-facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:24px 0; }
+.request-facts > div { padding:16px; border:1px solid var(--border); border-radius:14px; }
+.request-facts dt { color:var(--text-muted); font-size:12px; margin-bottom:8px; }
+.request-facts dd { margin:0; font-weight:600; line-height:1.5; text-transform:capitalize; overflow-wrap:anywhere; }
+.request-instructions { padding:20px; border:1px solid var(--border); border-radius:16px; }
+.request-instructions p { white-space:pre-wrap; line-height:1.6; color:var(--text-muted); }
+.request-assignment { display:flex; flex-direction:column; align-self:start; gap:12px; padding:24px; border:1px solid var(--border); border-radius:18px; background:var(--sidebar); min-width:0; }
+.request-assignment input,.request-assignment select { width:100%; min-width:0; min-height:48px; }
+.request-assignment label { font-size:14px; }
+.request-assignment label span { color:var(--text-muted); }
+.request-assignment button { margin-top:12px; min-height:48px; background:var(--action); color:var(--canvas); text-align:center; font-weight:600; }
+@media(max-width:800px) { .request-content { grid-template-columns:minmax(0,1fr); gap:24px; padding:16px; } .long-term-request .request-heading { padding:20px; } }
+@media(max-width:400px) { .request-facts { grid-template-columns:minmax(0,1fr); } }
+
+/* Compact, equally sized catalog controls; never stretch names across a row. */
+.record-actions:has(.service-fields) { display:flex; align-items:end; gap:12px; width:auto; max-width:100%; }
+.record-actions:has(.service-fields) > label,
+.record-actions:has(.service-fields) > .service-fields { flex:0 1 220px; width:220px; max-width:100%; }
+.record-actions:has(.service-fields) > label { display:grid; gap:8px; }
+.record-actions:has(.service-fields) .service-fields { display:block; }
+.record-actions:has(.service-fields) input { width:100%; min-height:48px; }
+.record-actions:has(.service-fields) > select { width:220px; min-height:48px; }
+.service-create > .service-fields { grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),220px)); max-width:760px; align-items:end; }

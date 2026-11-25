@@ -13,18 +13,13 @@ async function request(path, execute, options = {}, token = 'test-admin') {
   }));
 }
 
-test('pending large jobs load without a nonexistent bookings timestamp column', async () => {
+test('dashboard retires category dispatch while retaining the map and compatibility key', async () => {
   const response = await request('/api/admin/dashboard', async sql => {
-    if (sql.includes('FROM bookings b')) {
-      assert.doesNotMatch(sql, /created_at/);
-      assert.match(sql, /b.status = 'searching'/);
-      return [[{ id: 30, service: 'drivewayBuild', total: 100, cityId: '7', address: 'Example address', dispatch_status: 'pending_admin' }]];
-    }
+    assert.doesNotMatch(sql, /dispatch_status = 'pending_admin'/);
     return [[]];
   }, { largeJobsDispatch: true });
   assert.equal(response.status, 200);
-  assert.equal(response.body.LargeJobs[0].id, '30');
-  assert.equal(response.body.LargeJobs[0].cityId, 7);
+  assert.deepEqual(response.body.LargeJobs, []);
   assert.ok(Object.hasOwn(response.body, 'Map'));
 });
 
@@ -36,10 +31,17 @@ test('admin map remains available without pricing enabled and still requires adm
   assert.equal((await request('/api/admin/map', execute, {}, 'incorrect')).status, 401);
 });
 
-test('large-job database failures are reported instead of becoming a false empty list', async () => {
-  const response = await request('/api/admin/dashboard', async sql => {
-    if (sql.includes('FROM bookings b')) throw new Error('Database unavailable');
+test('long-term admin queue is driven by booking arrangement, not service category', async () => {
+  const response=await request('/api/admin/dashboard',async sql=>{
+    if(sql.includes('u.name AS customer_name')){
+      assert.match(sql,/bookingType/);
+      assert.doesNotMatch(sql,/service_category/);
+      return [[{id:9,dispatch_status:'pending_admin',customer_name:'Customer',customer_email:'customer@example.test',details:{bookingType:'long_term',service:'custom',serviceTitle:'Window Cleaning',property:{address:'Street, City',measurements:{walkway:'long'}},total:84.75,scheduledDate:'2026-12-01',notes:'Instructions'}}]];
+    }
     return [[]];
-  }, { largeJobsDispatch: true });
-  assert.equal(response.status, 500);
+  },{servicesPricing:true,largeJobsDispatch:true});
+  assert.equal(response.status,200);
+  assert.equal(response.body.LongTermJobs[0].title,'Window Cleaning #9');
+  assert.equal(response.body.LongTermJobs[0].notes,'Instructions');
+  assert.deepEqual(response.body.LargeJobs,[]);
 });

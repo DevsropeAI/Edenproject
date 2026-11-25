@@ -1,6 +1,6 @@
 export const filterLabels = {
-  customers: 'Customer jobs', contractors: 'Contractors', small: 'Small leads',
-  large: 'Large leads', active: 'Active jobs', completed: 'Completed jobs',
+  customers: 'Customer jobs', contractors: 'Contractors', open: 'Open leads',
+  active: 'Active jobs', completed: 'Completed jobs',
 };
 export function matchesSearch(marker, query) {
   const d=marker.details??{};
@@ -15,7 +15,7 @@ export function visibleMarker(marker, filters, query) {
   if(!matchesSearch(marker,query))return false;
   if(marker.entity==='contractor')return filters.includes('contractors');
   if(!filters.includes('customers'))return false;
-  return filters.includes(['active','completed'].includes(marker.kind)?marker.kind:marker.category??'small');
+  return filters.includes(['active','completed'].includes(marker.kind)?marker.kind:'open');
 }
 export function fullAddress(property={}) {
   const a=property.structuredAddress;

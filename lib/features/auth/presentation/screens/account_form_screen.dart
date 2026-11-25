@@ -10,7 +10,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/network/api_client.dart';
 import '../../data/repositories/auth_repository.dart';
 import '../../../home/presentation/screens/marketplace_screens.dart';
-import '../../../home/presentation/screens/address_search_field.dart';
+import '../../../home/presentation/screens/work_location_pin_field.dart';
 import '../../domain/auth_state.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/account_options_provider.dart';
@@ -55,7 +55,7 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
     {'id': 'lawn', 'title': 'Lawn mowing'},
     {'id': 'cleaning', 'title': 'House cleaning'},
   ];
-  Map<String, dynamic>? _workCity;
+  WorkPin? _workPin;
 
   bool get _login => widget.mode == AuthMode.login;
   bool get _reset => widget.mode == AuthMode.reset;
@@ -84,6 +84,11 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
             .maybeWhen(initial: () => true, orElse: () => false) ||
         !_form.currentState!.validate())
       return;
+    if (_contractor && ref.read(accountOptionsProvider).asData?.value['contractorWorkPin'] != true) {
+      setState(() => _feedback = 'Work-location pins require the updated backend. Restart it and reload registration.');
+      ref.invalidate(accountOptionsProvider);
+      return;
+    }
     setState(() {
       _busy = true;
       _feedback = null;
@@ -103,10 +108,10 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
         'phone': _phone.text.trim(),
         'phoneCode': _phoneCode.text.trim(),
         'role': _contractor ? 'contractor' : 'customer',
-        'area': _workCity?['city'] as String? ?? _area.text.trim(),
+        'area': _workPin != null ? 'Pinned work location' : _area.text.trim(),
         'service': _contractor ? registrationPrimaryTitle(ref.read(serviceDetailsProvider).asData?.value ?? _legacyServices, _service) : '',
         if (_contractor) 'serviceIds': _additionalServiceIds.toList(),
-        if (_contractor && _workCity != null) 'workCity': _workCity,
+        if (_contractor && _workPin != null) 'workPin': {'latitude':_workPin!.latitude,'longitude':_workPin!.longitude},
       });
     }
     if (!mounted) return;
@@ -510,29 +515,7 @@ class _AccountFormScreenState extends ConsumerState<AccountFormScreen> {
                       if (_reset && _codeRequested)
                         _field(_resetCode, 'Reset code', Icons.key_outlined),
                       if (_contractor) ...[
-                        AddressSearchField(
-                          controller: _area,
-                          label: 'Service city',
-                          required: true,
-                          enabled: !_busy,
-                          citiesOnly: true,
-                          registration: true,
-                          onEdited: () => setState(() => _workCity = null),
-                          onSelected: (city) {
-                            setState(() {
-                              _workCity = city;
-                              _area.text =
-                                  [city['city'], city['state'], city['country']]
-                                      .whereType<String>()
-                                      .where((value) => value.isNotEmpty)
-                                      .join(', ');
-                            });
-                          },
-                        ),
-                        if (_workCity != null)
-                          const Text(
-                            'Service city selected. It will be saved with your account.',
-                          ),
+                        WorkLocationPinField(value:_workPin,required:true,enabled:!_busy,onChanged:(pin)=>setState(()=>_workPin=pin)),
                         if (catalog?.isLoading == true) const LinearProgressIndicator(),
                         if (catalog?.hasError == true) TextButton(
                           onPressed: () => ref.invalidate(serviceDetailsProvider),

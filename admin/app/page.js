@@ -7,7 +7,8 @@ export default async function Page({ searchParams }) {
   try {
     const { section, search, result } = await searchParams;
     const dashboard = await adminRequest('/dashboard');
-    const data = { Map: [], ...dashboard };
+    const { LargeJobs: _retired, ...catalogDashboard } = dashboard;
+    const data = { Map: [], ...catalogDashboard };
     let mapData = null;
     let mapError = false;
     if (section === 'Map') {

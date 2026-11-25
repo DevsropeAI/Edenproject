@@ -18,11 +18,11 @@ export async function updateStatus(section, search, formData) {
   if (!Object.hasOwn(formats, type) || typeof id !== 'string' || !formats[type].test(id)) {
     throw new Error('Invalid record.');
   }
-  const priceCents = type === 'services' ? Math.round(Number(price) * 100) : undefined;
+  const priceCents = type === 'services' ? moneyCents(price) : undefined;
   const query = new URLSearchParams({ section, search });
   try {
     await adminRequest('/' + type + '/' + id, { method: 'POST', body: JSON.stringify({ status, priceCents,
-      ...(type==='services'?{service_category:formData.get('service_category')}:{}) }) });
+      ...(type==='services'?serviceFields(formData):{}) }) });
     query.set('result', 'saved');
   } catch (error) {
     console.error(error);
@@ -41,19 +41,32 @@ export async function loadDocument(id, kind) {
   return adminRequest('/verification/' + id + '/' + kind);
 }
 
-export async function dispatchJob(id, section, search, formData) {
-  if (!validSession((await cookies()).get(sessionCookie)?.value)) {
-    throw new Error('Admin sign-in required.');
-  }
-  const { action, contractorId, reason, note } = Object.fromEntries(formData);
-  if (!/^\d+$/.test(id)) throw new Error('Invalid job.');
-  const query = new URLSearchParams({ section, search });
+
+function moneyCents(value) {
+  if(typeof value!=='string'||!/^\d{1,5}(?:\.\d{1,2})?$/.test(value))throw new Error('Enter a valid price.');
+  const [whole,fraction='']=value.split('.');
+  return Number(whole)*100+Number(fraction.padEnd(2,'0'));
+}
+function serviceFields(form) {
+  return {title:form.get('title')};
+}
+export async function createService(form) {
+  if(!validSession((await cookies()).get(sessionCookie)?.value))throw new Error('Admin sign-in required.');
+  const query=new URLSearchParams({section:'Services'});
   try {
-    await adminRequest('/dispatch/' + id, { method: 'POST', body: JSON.stringify({ action, contractorId, reason, note }) });
-    query.set('result', 'saved');
-  } catch (error) {
-    console.error(error);
-    query.set('result', 'error');
-  }
-  redirect('/?' + query);
+    await adminRequest('/services',{method:'POST',body:JSON.stringify({...serviceFields(form),priceCents:moneyCents(form.get('price')),status:form.get('status')})});
+    query.set('result','saved');
+  } catch {query.set('result','error');}
+  redirect('/?'+query);
+}
+
+export async function dispatchJob(id, section, search, formData) {
+  if (!validSession((await cookies()).get(sessionCookie)?.value)) throw new Error('Admin sign-in required.');
+  if (!/^\d+$/.test(id)) throw new Error('Invalid job.');
+  const query=new URLSearchParams({section,search});
+  try {
+    await adminRequest('/dispatch/'+id,{method:'POST',body:JSON.stringify({action:'assign',contractorId:formData.get('contractorId'),note:formData.get('note')})});
+    query.set('result','saved');
+  }catch {query.set('result','error');}
+  redirect('/?'+query);
 }

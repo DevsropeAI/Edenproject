@@ -4,11 +4,14 @@ import {calculateQuote,createPricing} from './pricing.mjs';
 import {mapData} from './map-data.mjs';
 
 test('original three totals retain urgent, walkway, 13 percent tax and EDEN10 behavior',()=>{
+  // Golden cents captured from the committed quote engine before this change.
+  // Floating-point recomputation incorrectly rounded some half-cent totals down.
+  const totals={3000:[3390,3051],4500:[5085,4577],5000:[5650,5085],5700:[6441,5797],6000:[6780,6102],6500:[7345,6611],7200:[8136,7322],7700:[8701,7831],8000:[9040,8136],8500:[9605,8645],9200:[10396,9356],10000:[11300,10170],10500:[11865,10679],12000:[13560,12204]};
   let cases=0;
   for(const [id,price] of [['snow',4500],['lawn',3000],['cleaning',8500]])
     for(const size of ['Standard','Large'])for(const urgent of [false,true])for(const walkway of [false,true])for(const discount of [false,true]){
       const base=price+(size==='Large'?1500:0)+(urgent?2000:0)+(walkway&&id==='snow'?1200:0);
-      const expected=Math.round(base*(discount?0.9:1)*1.13);
+      const expected=totals[base][Number(discount)];
       const q=calculateQuote({service:{id,price_cents:price,service_category:'small'},property:{size,measurements:{driveway:'large'}},
         input:{urgent,walkway,discount},coupon:discount?{active:1,discount_bps:1000}:null,
         modifiers:[{dimension:'driveway_size',choice:'large',price_cents:9999}],taxBps:500});

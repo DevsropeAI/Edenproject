@@ -10,7 +10,7 @@ function SearchIcon(){return <svg viewBox="0 0 24 24" width="20" height="20" fil
 function MarkerSymbol({kind,config,offline=false}) {
   const s=config[kind];
   return <span aria-hidden="true" className={`map-symbol ${s.shape==='circle'?'map-symbol--circle':'map-symbol--pin'} ${offline?'map-symbol--offline':''}`} style={{'--marker-color':s.color}}>
-    <span>{kind==='completed'?<svg viewBox="0 0 20 20"><path d="m4 10 4 4 8-8"/></svg>:kind==='active'?<span className="map-symbol__ring"/>:kind==='large'?'L':null}</span>
+    <span>{kind==='completed'?<svg viewBox="0 0 20 20"><path d="m4 10 4 4 8-8"/></svg>:kind==='active'?<span className="map-symbol__ring"/>:null}</span>
   </span>;
 }
 function InfoRow({label,children}){return children!=null&&children!==''?<div className="map-detail__row"><dt>{label}</dt><dd>{children}</dd></div>:null;}
@@ -75,7 +75,7 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
       root.style.setProperty('--marker-color',s.color);root.style.setProperty('--marker-size',`${s.size}px`);
       if(m.online===false)root.style.opacity=String(data.config.offlineOpacity);
       const badge=document.createElement('span');badge.className='map-marker__badge';
-      if(m.kind==='completed')badge.textContent='✓';else if(m.kind==='large')badge.textContent='L';
+      if(m.kind==='completed')badge.textContent='✓';
       root.append(badge);
       L.marker([m.latitude,m.longitude],{title:`${m.title}: ${m.detail}`,icon:L.divIcon({html:root,className:'eden-map-marker',iconSize:[48,48],iconAnchor:[24,24]})}).addTo(layer).on('click',()=>setSelected(m.id));
     }
@@ -93,7 +93,7 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
     <div className="map-search"><SearchIcon/><input type="search" value={query} onChange={e=>{setQuery(e.target.value);setSelected(null);}} placeholder="Address, city, contractor or booking…" aria-label="Search saved map locations"/>{query&&<button type="button" onClick={()=>setQuery('')}>Clear</button>}</div>
     <p className="map-search__hint">Search saved marketplace records. This is not a worldwide address lookup.</p>
     <div className="map-filter-chips" role="group" aria-label="Map layers">{Object.entries(filterLabels).map(([key,label])=><button key={key} type="button" aria-pressed={filters.includes(key)} onClick={()=>{setSelected(null);setFilters(prev=>prev.includes(key)?prev.filter(f=>f!==key):[...prev,key]);}}>{label}</button>)}</div>
-    <div className="map-legend" aria-label="Map legend">{['customer','large','contractor','active','completed'].map(kind=><span key={kind}><MarkerSymbol kind={kind} config={data.config}/>{({customer:'Small lead',large:'Large lead',contractor:'Contractor',active:'Active job',completed:'Completed'})[kind]}</span>)}<small>Solid blue: live · Outlined blue: last location / work city</small></div>
+    <div className="map-legend" aria-label="Map legend">{['customer','contractor','active','completed'].map(kind=><span key={kind}><MarkerSymbol kind={kind} config={data.config}/>{({customer:'Open lead',contractor:'Contractor',active:'Active job',completed:'Completed'})[kind]}</span>)}<small>Solid blue: live · Outlined blue: last location / work city</small></div>
     {!ready&&!error&&<p role="status" className="map-notice">Loading marketplace map…</p>}
     {error&&<div role="alert" className="map-notice">{error} <button type="button" className="map-refresh" onClick={()=>setMapAttempt(value=>value+1)}>Retry map</button></div>}
     <div className="map-stage"><div ref={element} className="map-canvas" role="region" aria-label="Marketplace locations"/>{selectedMarker&&<DetailsCard marker={selectedMarker} onClose={()=>setSelected(null)}/>}</div>

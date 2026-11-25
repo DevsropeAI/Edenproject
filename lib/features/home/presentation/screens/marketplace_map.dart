@@ -38,16 +38,14 @@ class _MarketplaceMapState extends ConsumerState<MarketplaceMap> {
   final _filters = {
     'customers',
     'contractors',
-    'small',
-    'large',
+    'open',
     'active',
     'completed',
   };
   static const _labels = {
     'customers': 'Customers',
     'contractors': 'Contractors',
-    'small': 'Small leads',
-    'large': 'Large leads',
+    'open': 'Open leads',
     'active': 'Active jobs',
     'completed': 'Completed',
   };
@@ -76,8 +74,7 @@ class _MarketplaceMapState extends ConsumerState<MarketplaceMap> {
               Text('Map key', style: Theme.of(sheet).textTheme.titleLarge),
               const SizedBox(height: EdenSpacing.section),
               for (final entry in {
-                'customer': 'Small open lead',
-                'large': 'Large open lead',
+                'customer': 'Open lead',
                 'contractor': 'Contractor',
                 'active': 'Active job',
                 'completed': 'Completed job',
@@ -162,7 +159,7 @@ class _MarketplaceMapState extends ConsumerState<MarketplaceMap> {
             _filters.contains(
               m['kind'] == 'active' || m['kind'] == 'completed'
                   ? m['kind']
-                  : m['category'] ?? 'small',
+                  : 'open',
             );
   @override
   Widget build(BuildContext context) {

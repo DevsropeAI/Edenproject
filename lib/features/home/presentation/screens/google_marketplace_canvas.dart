@@ -14,11 +14,17 @@ class GoogleMarketplaceCanvas extends StatefulWidget {
     required this.config,
     required this.onSelected,
     this.selectedId,
+    this.initialLocation,
+    this.cameraRevision = 0,
+    this.fitAllMarkers = true,
   });
   final List<Map<String, dynamic>> markers;
   final Map<String, dynamic> config;
   final ValueChanged<Map<String, dynamic>> onSelected;
   final String? selectedId;
+  final bool fitAllMarkers;
+  final int cameraRevision;
+  final ({double latitude, double longitude})? initialLocation;
 
   @override
   State<GoogleMarketplaceCanvas> createState() =>
@@ -160,6 +166,9 @@ class _GoogleMarketplaceCanvasState extends State<GoogleMarketplaceCanvas> {
         icons: _icon,
         onSelected: widget.onSelected,
         selectedId: widget.selectedId,
+        initialLocation: widget.initialLocation,
+        fitAllMarkers: widget.fitAllMarkers,
+        cameraRevision: widget.cameraRevision,
       );
     },
   );
@@ -171,11 +180,17 @@ class _GoogleMarkers extends StatefulWidget {
     required this.icons,
     required this.onSelected,
     this.selectedId,
+    this.initialLocation,
+    this.cameraRevision = 0,
+    this.fitAllMarkers = false,
   });
   final List<Map<String, dynamic>> markers;
   final Future<google.BitmapDescriptor> Function(Map) icons;
   final ValueChanged<Map<String, dynamic>> onSelected;
   final String? selectedId;
+  final bool fitAllMarkers;
+  final int cameraRevision;
+  final ({double latitude, double longitude})? initialLocation;
   @override
   State<_GoogleMarkers> createState() => _GoogleMarkersState();
 }
@@ -195,11 +210,17 @@ class _GoogleMarkersState extends State<_GoogleMarkers> {
   void didUpdateWidget(covariant _GoogleMarkers oldWidget) {
     super.didUpdateWidget(oldWidget);
     _update();
-    if (oldWidget.selectedId != widget.selectedId ||
+    if (oldWidget.cameraRevision != widget.cameraRevision || oldWidget.fitAllMarkers != widget.fitAllMarkers || oldWidget.initialLocation != widget.initialLocation || oldWidget.selectedId != widget.selectedId ||
         oldWidget.markers.map((marker) => marker['id']).join(',') !=
             widget.markers.map((marker) => marker['id']).join(',')) {
       _focus();
     }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
   }
 
   Future<void> _focus() async {
@@ -218,6 +239,11 @@ class _GoogleMarkersState extends State<_GoogleMarkers> {
           16,
         ),
       );
+      return;
+    }
+    if (!widget.fitAllMarkers && widget.initialLocation != null) {
+      final location = widget.initialLocation!;
+      await controller.animateCamera(google.CameraUpdate.newLatLngZoom(google.LatLng(location.latitude, location.longitude), 12));
       return;
     }
     if (widget.markers.length == 1) {
@@ -266,7 +292,9 @@ class _GoogleMarkersState extends State<_GoogleMarkers> {
               (marker['longitude'] as num).toDouble(),
             ),
             icon: await widget.icons(marker),
-            anchor: const Offset(.5, .5),
+            // Pin tips identify the job coordinate; the self circle stays centered.
+            // This also keeps both shapes visible when testing at one location.
+            anchor: marker['kind'] == 'contractor' ? const Offset(.5, .42) : const Offset(.5, .88),
             consumeTapEvents: true,
             infoWindow: google.InfoWindow(title: marker['title'] as String?),
             onTap: () => widget.onSelected(marker),
@@ -295,10 +323,10 @@ class _GoogleMarkersState extends State<_GoogleMarkers> {
       : google.GoogleMap(
           initialCameraPosition: google.CameraPosition(
             target: google.LatLng(
-              (widget.markers.first['latitude'] as num).toDouble(),
-              (widget.markers.first['longitude'] as num).toDouble(),
+              widget.initialLocation?.latitude ?? (widget.markers.isEmpty ? 0 : (widget.markers.first['latitude'] as num).toDouble()),
+              widget.initialLocation?.longitude ?? (widget.markers.isEmpty ? 0 : (widget.markers.first['longitude'] as num).toDouble()),
             ),
-            zoom: 12,
+            zoom: widget.initialLocation == null && widget.markers.isEmpty ? 2 : 12,
           ),
           minMaxZoomPreference: const google.MinMaxZoomPreference(null, 19),
           markers: _markers,

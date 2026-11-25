@@ -5,7 +5,7 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../auth/data/repositories/auth_repository.dart';
 import '../../../auth/providers/auth_provider.dart';
-import 'address_search_field.dart';
+import 'work_location_pin_field.dart';
 
 final workLocationProvider = FutureProvider.autoDispose<Map<String, dynamic>>((
   ref,
@@ -24,16 +24,9 @@ class WorkLocationEditor extends ConsumerStatefulWidget {
 }
 
 class _WorkLocationEditorState extends ConsumerState<WorkLocationEditor> {
-  final _query = TextEditingController();
-  Map<String, dynamic>? _selection;
+  WorkPin? _selection;
   bool _saving = false;
   String? _message;
-
-  @override
-  void dispose() {
-    _query.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,54 +36,9 @@ class _WorkLocationEditorState extends ConsumerState<WorkLocationEditor> {
       spacing: EdenSpacing.sm,
       children: [
         const SizedBox(height: EdenSpacing.section),
-        const Text('Work location'),
-        const SizedBox(height: EdenSpacing.sm),
-        ...saved.when(
-          loading: () => const [LinearProgressIndicator()],
-          error: (_, _) => [
-            TextButton(
-              onPressed: () => ref.invalidate(workLocationProvider),
-              child: const Text('Retry loading work location'),
-            ),
-          ],
-          data: (data) => [
-            Text('Existing service area: ${data['area'] ?? ''}'),
-            if (data['city'] case final Map city)
-              Text(
-                'Saved city: ${[city['name'], city['state'], city['country']].whereType<String>().where((v) => v.isNotEmpty).join(', ')}',
-              ),
-          ],
-        ),
-        const SizedBox(height: EdenSpacing.screen),
-        AddressSearchField(
-          controller: _query,
-          label: 'Search work city',
-          enabled: !_saving,
-          citiesOnly: true,
-          onEdited: () => setState(() {
-            _selection = null;
-            _message = null;
-          }),
-          onSelected: (value) {
-            if ((value['city'] as String? ?? '').isEmpty ||
-                (value['country'] as String? ?? '').isEmpty) {
-              setState(
-                () => _message =
-                    'Choose a result that includes a city and country.',
-              );
-              return;
-            }
-            setState(() {
-              _message = null;
-              _selection = value;
-              _query.text = [
-                value['city'],
-                value['state'],
-                value['country'],
-              ].whereType<String>().where((v) => v.isNotEmpty).join(', ');
-            });
-          },
-        ),
+        if (saved.isLoading) const LinearProgressIndicator(),
+        if (saved.hasError) TextButton(onPressed:()=>ref.invalidate(workLocationProvider),child:const Text('Retry loading work location')),
+        if (saved.hasValue) WorkLocationPinField(value:_selection ?? workPinFromJson(saved.value?['workPin']),enabled:!_saving,onChanged:(pin)=>setState((){_selection=pin;_message=null;})),
         const SizedBox(height: EdenSpacing.gap),
         if (_message != null) Text(_message!),
         FilledButton(
@@ -106,17 +54,17 @@ class _WorkLocationEditorState extends ConsumerState<WorkLocationEditor> {
                         .read(apiClientProvider)
                         .post(
                           '/contractor/work-location',
-                          data: {'city': _selection},
+                          data: {'workPin': {'latitude':_selection!.latitude,'longitude':_selection!.longitude}},
                         );
                     ref.invalidate(workLocationProvider);
-                    if (mounted) setState(() => _message = 'Work city saved.');
+                    if (mounted) setState(() => _message = 'Work location saved.');
                   } catch (error) {
                     if (mounted) setState(() => _message = apiError(error));
                   } finally {
                     if (mounted) setState(() => _saving = false);
                   }
                 },
-          child: const Text('Save work city'),
+          child: const Text('Save work location'),
         ),
       ],
     );

@@ -1,3 +1,4 @@
+import '../../features/home/presentation/screens/explore_services_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -45,6 +46,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       if (isPublic) return home;
       final customerOnly =
           path == '/customer-home' ||
+          path == '/explore-services' ||
           path == '/bookings' ||
           path.startsWith('/bookings/') ||
           path == '/properties' ||
@@ -100,6 +102,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/register/contractor',
         builder: (context, state) => const ContractorRegisterScreen(),
       ),
+      GoRoute(path: '/explore-services', builder: (context, state) => const ExploreServicesScreen()),
       GoRoute(
         path: '/customer-home',
         builder: (context, state) => const CustomerHomeScreen(),

@@ -52,8 +52,8 @@ void main() {
       expect(find.text('Large open lead'), findsNothing);
       await tester.tap(find.text('Map key'));
       await tester.pumpAndSettle();
-      expect(find.text('Large open lead'), findsOneWidget);
-      expect(find.text('L'), findsOneWidget);
+      expect(find.text('Open lead'), findsOneWidget);
+      expect(find.text('L'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Got it'));
       await tester.pumpAndSettle();

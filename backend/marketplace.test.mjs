@@ -68,25 +68,24 @@ test('a stale job acceptance fails when another worker changed the row', async (
   await assert.rejects(() => marketplace(request), error => error.status === 409);
 });
 
-test('an available contractor cannot accept a job outside their city', async () => {
-  await assert.rejects(() => marketplace({
-    method: 'POST', path: '/api/bookings/10', user: { ...contractor, area: 'Ottawa' },
-    read: async () => ({ action: 'accept' }),
-    first: async sql => sql.startsWith('SELECT b.*, p.details')
-      ? { status: 'searching', version: 0, customer_id: 'owner', details: offerDetails }
-      : undefined,
-    run: async () => assert.fail('ineligible offer was updated'),
-  }), error => error.status === 404);
+test('an available contractor can accept a public job outside their city and specialty', async () => {
+  const result=await marketplace({
+    method:'POST',path:'/api/bookings/10',user:{...contractor,area:'Ottawa',service:'Different service'},
+    read:async()=>({action:'accept'}),
+    first:async sql=>sql.startsWith('SELECT b.*, p.details')?{id:10,status:'searching',version:0,customer_id:'owner',details:offerDetails}:sql.includes('contractor_reviews')?{status:'Approved'}:undefined,
+    run:async()=>({affectedRows:1}),
+  });
+  assert.equal(result.status,'accepted');
 });
 
-test('catalog primary-service capitalization and additional services both match within the saved area', async () => {
+test('all public services are offered regardless of contractor specialty or work city', async () => {
   const rows = ['snow', 'tree'].map((service, index) => ({
     id: index + 1, status: 'searching', contractor_id: null, details: { ...offerDetails, service },
   }));
   const user = { ...contractor, service: 'Snow Removal', additionalServices: ['tree'] };
   const offers = await marketplace({ method: 'GET', path: '/api/bookings', user, run: async () => rows });
   assert.deepEqual(offers.map(row => row.service), ['snow', 'tree']);
-  assert.deepEqual(await marketplace({ method: 'GET', path: '/api/bookings', user: { ...user, area: 'Ottawa' }, run: async () => rows }), []);
+  assert.equal((await marketplace({ method: 'GET', path: '/api/bookings', user: { ...user, area: 'Ottawa', service:'Other', additionalServices:[] }, run: async () => rows })).length, 2);
 });
 
 test('releasing an accepted job reopens it and removes prior chat from the next offer', async () => {

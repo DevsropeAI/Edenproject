@@ -37,20 +37,10 @@ export function image(value) {
 
 const parse = value => typeof value === 'string' ? JSON.parse(value) : value;
 const property = row => ({ ...parse(row.details), id: row.id });
-const primaryServiceIds = new Map([
-  ['snow removal', 'snow'],
-  ['lawn mowing', 'lawn'],
-  ['house cleaning', 'cleaning'],
-]);
-
+// Public offers are global. Service specialties and work-city are profile data,
+// not eligibility filters. Explicit long-term requests require admin assignment.
 function matchesOffer(details, user) {
-  const sameCity = user.city_id != null && details.property?.cityId != null
-    ? Number(user.city_id) === Number(details.property.cityId)
-    : details.property?.address?.split(',')[1]?.trim().toLowerCase() === user.area?.trim().toLowerCase();
-  const city = details.property?.address?.split(',')[1]?.trim().toLowerCase();
-  return Boolean(sameCity && (details.property?.cityId != null || city) &&
-    (details.service === primaryServiceIds.get(user.service?.toLowerCase()) || user.additionalServices?.includes(details.service)) &&
-    !details.releasedBy?.includes(user.id));
+  return details.bookingType !== 'long_term' && !details.releasedBy?.includes(user.id);
 }
 
 function offerDetails(row) {
@@ -67,6 +57,7 @@ const booking = (row, audience) => {
   const { location, releasedBy, assignmentHistory, ...details } = parse(row.details);
   if (audience?.role === 'contractor') { delete details.breakdown; delete details.customerNoticeReadVersion; }
   return { ...details, id: row.id, status: row.status, version: row.version,
+    ...(row.customer_name ? {customerName:row.customer_name} : {}),
     ...(row.service_category ? { service_category: row.service_category } : {}),
     ...(row.dispatch_status ? { dispatch_status: row.dispatch_status } : {}),
     ...(row.rejection_reason ? { rejection_reason: row.rejection_reason } : {}),
@@ -185,13 +176,13 @@ export async function marketplace({ method, path, user, run, first, read, addres
         return (await run('SELECT * FROM bookings WHERE customer_id = ? ORDER BY id DESC', user.id))
           .filter(row => !parse(row.details).customerDeleted).map(booking);
       }
-      const records = await run(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''} FROM bookings b
-        ${currentPropertyJoin} WHERE b.contractor_id = ? OR (b.dispatch_status = 'assigned' AND b.assigned_contractor_id = ? AND b.contractor_id IS NULL AND b.status = 'searching') OR
-        (b.status = 'searching' AND b.dispatch_status = 'open' AND b.customer_id <> ? AND NOT EXISTS (SELECT 1 FROM preferences p WHERE p.user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(p.details, '$.available')) = 'false') AND NOT EXISTS (
+      const records = await run(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''}, customer.name AS customer_name FROM bookings b
+        ${currentPropertyJoin} LEFT JOIN users customer ON customer.id=b.customer_id WHERE b.contractor_id = ? OR (b.dispatch_status = 'assigned' AND b.assigned_contractor_id = ? AND b.contractor_id IS NULL AND b.status = 'searching') OR
+        (b.status = 'searching' AND b.dispatch_status IN ('open', 'pending_admin') AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(b.details, '$.bookingType')), 'one_time') <> 'long_term' AND b.customer_id <> ? AND NOT EXISTS (SELECT 1 FROM preferences p WHERE p.user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(p.details, '$.available')) = 'false') AND NOT EXISTS (
           SELECT 1 FROM declined_jobs d WHERE d.booking_id = b.id AND d.contractor_id = ?))
         ORDER BY b.id DESC`, user.id, user.id, user.id, user.id, user.id);
       return records.filter(row => row.contractor_id === user.id || (row.dispatch_status === 'assigned' && row.assigned_contractor_id === user.id) ||
-        (row.status === 'searching' && row.customer_id !== user.id && (row.dispatch_status ?? 'open') === 'open' && matchesOffer(offerDetails(row), user))).map(row => {
+        (row.status === 'searching' && row.customer_id !== user.id && ['open','pending_admin'].includes(row.dispatch_status ?? 'open') && matchesOffer(offerDetails(row), user))).map(row => {
         const job = booking({ ...row, details: offerDetails(row) }, user);
         if (row.contractor_id !== user.id) {
           const location = job.property;
@@ -210,6 +201,8 @@ export async function marketplace({ method, path, user, run, first, read, addres
     if (method === 'POST') {
       if (user.role !== 'customer') error(403, 'Switch to customer mode.');
       const body = await read();
+      if(body.bookingType!=null&&!['one_time','long_term'].includes(body.bookingType))error(400,'Choose one-time or long-term service.');
+      if(!pricing&&body.bookingType==='long_term')error(503,'Long-term requests require the updated booking backend.');
       if (pricing) return pricing.place(user, body, {
         notes: text(body.notes, 2000), recurring: body.recurring === true,
         referencePhoto: image(body.referencePhoto), review: '', messages: [],
@@ -241,18 +234,18 @@ export async function marketplace({ method, path, user, run, first, read, addres
     const id = Number(match[1]);
     const body = await read();
     if(pricing&&['edit','previewEdit'].includes(body.action))return pricing.edit(user,id,body,body.action==='previewEdit');
-    const row = await first(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''} FROM bookings b
-      ${currentPropertyJoin} WHERE b.id = ?`, id);
+    const row = await first(`SELECT b.*, p.details AS current_property${addressStore ? ', p.city_id AS current_city_id' : ''}, customer.name AS customer_name FROM bookings b
+      ${currentPropertyJoin} LEFT JOIN users customer ON customer.id=b.customer_id WHERE b.id = ?`, id);
     if (!row) error(404, 'Booking unavailable.');
     const customer = user.role === 'customer' && row.customer_id === user.id;
     const assigned = user.role === 'contractor' && row.contractor_id === user.id;
     const available = user.role === 'contractor' && !await first("SELECT 1 FROM preferences WHERE user_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(details, '$.available')) = 'false'", user.id);
     const details = offerDetails(row);
     const offered = user.role === 'contractor' && row.customer_id && row.customer_id !== user.id &&
-      row.status === 'searching' && (row.dispatch_status ?? 'open') !== 'pending_admin' && (row.dispatch_status ?? 'open') !== 'rejected' &&
+      row.status === 'searching' && (row.dispatch_status ?? 'open') !== 'rejected' &&
       (row.dispatch_status === 'assigned'
         ? row.assigned_contractor_id === user.id
-        : available && matchesOffer(details, user));
+        : ['open','pending_admin'].includes(row.dispatch_status ?? 'open') && available && matchesOffer(details, user));
     let status = row.status;
     let contractor = row.contractor_id;
     if (body.action === 'read-updates') {
@@ -271,7 +264,8 @@ export async function marketplace({ method, path, user, run, first, read, addres
     }
     if (offered && body.action === 'decline') {
       if (row.dispatch_status === 'assigned') {
-        const result = await run("UPDATE bookings SET dispatch_status = 'pending_admin', assigned_contractor_id = NULL, assigned_at = NULL, admin_note = CONCAT(COALESCE(admin_note, ''), ' [Declined by contractor]') WHERE id = ? AND dispatch_status = 'assigned' AND contractor_id IS NULL AND assigned_contractor_id = ?", id, user.id);
+        const nextDispatch = details.bookingType === 'long_term' ? 'pending_admin' : 'open';
+        const result = await run("UPDATE bookings SET dispatch_status = ?, assigned_contractor_id = NULL, assigned_at = NULL, admin_note = CONCAT(COALESCE(admin_note, ''), ' [Declined by contractor]') WHERE id = ? AND dispatch_status = 'assigned' AND contractor_id IS NULL AND assigned_contractor_id = ?", nextDispatch, id, user.id);
         if (!result.affectedRows) error(409, 'The assignment changed. Refresh and try again.');
       } else {
         await run('INSERT IGNORE INTO declined_jobs (booking_id, contractor_id) VALUES (?, ?)', id, user.id);
@@ -392,10 +386,13 @@ export async function marketplace({ method, path, user, run, first, read, addres
         { status, version: row.version + 1, at: new Date().toISOString() },
       ];
     }
-    const result = await run(`UPDATE bookings SET details = ?, status = ?, contractor_id = ?, version = version + 1
+    const reopened = ['release','cancel'].includes(body.action) && status === 'searching' && contractor == null;
+    const nextDispatch = reopened ? (details.bookingType === 'long_term' ? 'pending_admin' : 'open') : row.dispatch_status;
+    const resetDispatch = reopened ? `, dispatch_status = '${nextDispatch}', assigned_contractor_id = NULL, assigned_at = NULL` : '';
+    const result = await run(`UPDATE bookings SET details = ?, status = ?, contractor_id = ?, version = version + 1${resetDispatch}
       WHERE id = ? AND version = ?`, JSON.stringify(details), status, contractor, id, row.version);
     if (!result.affectedRows) error(409, 'The booking changed. Refresh and try again.');
-    return booking({ ...row, id, status, version: row.version + 1, details }, user);
+    return booking({ ...row, dispatch_status: nextDispatch, id, status, version: row.version + 1, details }, user);
   }
   return undefined;
 }

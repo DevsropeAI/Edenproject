@@ -62,17 +62,17 @@ class _ModeSwitchTileState extends ConsumerState<ModeSwitchTile> {
   );
 }
 
-class _ContractorSetup extends StatefulWidget {
+class _ContractorSetup extends ConsumerStatefulWidget {
   const _ContractorSetup();
 
   @override
-  State<_ContractorSetup> createState() => _ContractorSetupState();
+  ConsumerState<_ContractorSetup> createState() => _ContractorSetupState();
 }
 
-class _ContractorSetupState extends State<_ContractorSetup> {
+class _ContractorSetupState extends ConsumerState<_ContractorSetup> {
   final _form = GlobalKey<FormState>();
   final _area = TextEditingController();
-  String _service = 'Snow removal';
+  String? _service;
 
   @override
   void dispose() {
@@ -81,7 +81,9 @@ class _ContractorSetupState extends State<_ContractorSetup> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) {
+    final catalog = ref.watch(serviceDetailsProvider);
+    return AlertDialog(
     title: const Text('Set up contractor mode'),
     scrollable: true,
     content: Form(
@@ -96,17 +98,20 @@ class _ContractorSetupState extends State<_ContractorSetup> {
             validator: (value) =>
                 (value ?? '').trim().isEmpty ? 'Enter your service area' : null,
           ),
+          if (catalog.isLoading) const LinearProgressIndicator(),
+          if (catalog.hasError) TextButton(onPressed: () => ref.invalidate(serviceDetailsProvider), child: const Text('Retry loading services')),
+          if (catalog.hasValue && catalog.value!.isEmpty) const Text('No services are currently available.'),
           DropdownButtonFormField<String>(
             initialValue: _service,
             isExpanded: true,
             decoration: const InputDecoration(labelText: 'Primary service'),
+            validator: (value) => value == null ? 'Choose a service' : null,
             items: [
-              for (final service in Service.values)
+              for (final service in catalog.value ?? <Map<String, dynamic>>[])
                 DropdownMenuItem(
                   value:
-                      service.label[0] +
-                      service.label.substring(1).toLowerCase(),
-                  child: Text(service.label),
+                      service['title'] as String,
+                  child: Text(service['title'] as String),
                 ),
             ],
             onChanged: (value) => setState(() => _service = value!),
@@ -124,7 +129,7 @@ class _ContractorSetupState extends State<_ContractorSetup> {
           if (_form.currentState!.validate()) {
             Navigator.pop(context, (
               area: _area.text.trim(),
-              service: _service,
+              service: _service!,
             ));
           }
         },
@@ -132,4 +137,5 @@ class _ContractorSetupState extends State<_ContractorSetup> {
       ),
     ],
   );
+  }
 }
