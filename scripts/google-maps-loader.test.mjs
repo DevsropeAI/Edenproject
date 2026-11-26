@@ -7,9 +7,10 @@ const source = readFileSync(new URL('../web/google_maps_loader.js', import.meta.
 function setup(key) {
   const scripts = [];
   const timers = new Map();
+  const logs=[];
   const window = { EDEN_GOOGLE_MAPS_API_KEY: key };
   runInNewContext(source, {
-    window, URL,
+    window, URL, console:{info:(...args)=>logs.push(args),error:(...args)=>logs.push(args)},
     setTimeout: fn => { timers.set(1, fn); return 1; },
     clearTimeout: id => timers.delete(id),
     document: {
@@ -17,8 +18,17 @@ function setup(key) {
       head: { append: script => scripts.push(script) },
     },
   });
-  return { window, scripts, timers };
+  return { window, scripts, timers, logs };
 }
+
+test('web diagnostic logs never include the browser key',async()=>{
+  const t=setup('private-browser-test-key');
+  const promise=t.window.edenLoadGoogleMaps();
+  t.scripts[0].onerror();await assert.rejects(promise);
+  t.window.gm_authFailure();
+  assert.equal(JSON.stringify(t.logs).includes('private-browser-test-key'),false);
+  assert.match(JSON.stringify(t.logs),/google-auth-failure/);
+});
 
 test('missing key leaves the app usable without making a Google request', async () => {
   const { window, scripts } = setup();

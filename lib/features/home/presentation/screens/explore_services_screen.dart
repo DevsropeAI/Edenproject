@@ -1,3 +1,4 @@
+import '../../../../core/widgets/desktop_workspace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -51,7 +52,7 @@ class ExploreServicesScreen extends ConsumerWidget {
         if (services.isNotEmpty)
           LayoutBuilder(
             builder: (context, constraints) {
-              final columns = constraints.maxWidth < 300 ? 1 : 2;
+              final columns = EdenDesktopLayout.enabled(context) ? (constraints.maxWidth / 280).floor().clamp(2,4) : constraints.maxWidth < 300 ? 1 : 2;
               final width =
                   (constraints.maxWidth - EdenSpacing.gap * (columns - 1)) /
                   columns;

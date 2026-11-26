@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { filterLabels, fullAddress, matchesSearch, statusLabel, visibleMarker } from './map-utils.mjs';
-import { loadGoogleMaps } from './google-map-sdk.mjs';
+import { loadGoogleMaps, mapsErrorMessage } from './google-map-sdk.mjs';
 import { googleMapAdapter } from './google-map-adapter.mjs';
+import {mapDiagnostic,mapFailureDetails,watchMapBrowserFailures} from './map-diagnostics.mjs';
 import WalkingRoutes from './walking-routes';
 
 function SearchIcon(){return <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>;}
@@ -34,7 +35,7 @@ function DetailsCard({marker,onClose}) {
 }
 
 export default function MarketplaceMap({ data, search='', contractors:walkingContractors=[], mapKey, mapId }) {
-  const element=useRef(null);const mapRef=useRef(null);const layerRef=useRef(null);const libraryRef=useRef(null);const viewKey=useRef(null);
+  const element=useRef(null);const mapRef=useRef(null);const layerRef=useRef(null);const libraryRef=useRef(null);const viewKey=useRef(null);const loggedMarkerCount=useRef(null);
   const router=useRouter();const [pending,startTransition]=useTransition();
   const [ready,setReady]=useState(false);
   const [mapAttempt,setMapAttempt]=useState(0);
@@ -48,9 +49,15 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
   useEffect(()=>{
     let disposed=false;let map;let observer;
     setReady(false);setError('');
-    const timeout=setTimeout(()=>{if(!disposed)setError('The map is taking too long to load. Retry the map or refresh this page.');},15000);
+    const started=Date.now();
+    mapDiagnostic('info','map-init-start',{keyConfigured:!!mapKey?.trim(),origin:window.location.origin,attempt:mapAttempt,domReady:!!element.current,usingDemoMapId:!mapId||mapId==='DEMO_MAP_ID'});
+    const timeout=setTimeout(()=>{if(!disposed){mapDiagnostic('error','map-init-timeout',{code:'MAPS_TIMEOUT',elapsedMs:Date.now()-started});setError('The map is taking too long to load. Retry the map or refresh this page.');}},15000);
+    const unwatch=watchMapBrowserFailures(error=>{clearTimeout(timeout);if(!disposed){setError(mapsErrorMessage(error));setReady(false);}});
     loadGoogleMaps(mapKey).then(g=>{
       if(disposed)return;
+      const bounds=element.current?.getBoundingClientRect();
+      mapDiagnostic('info','map-creating',{width:bounds?.width??0,height:bounds?.height??0});
+      if(!bounds?.width||!bounds?.height)mapDiagnostic('warn','map-container-zero-size',{width:bounds?.width??0,height:bounds?.height??0,message:'The map container has no visible area. Check layout and styles.'});
       const {map:createdMap,api:L}=googleMapAdapter(g,element.current,mapId);
       libraryRef.current=L;
       map=createdMap;
@@ -61,13 +68,16 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
       observer.observe(element.current);
       map.invalidateSize({pan:false});
       viewKey.current=null;
+      loggedMarkerCount.current=null;
       clearTimeout(timeout);setError('');
       map.on('click',()=>setSelected(null));setReady(true);
-    }).catch(()=>{if(!disposed)setError('Map could not load. Refresh to retry.');});
-    return()=>{disposed=true;clearTimeout(timeout);observer?.disconnect();map?.remove();mapRef.current=null;layerRef.current=null;};
+      mapDiagnostic('info','map-initialized',{elapsedMs:Date.now()-started});
+    }).catch(error=>{clearTimeout(timeout);mapDiagnostic('error','map-init-failed',{...mapFailureDetails(error),message:mapsErrorMessage(error)});if(!disposed)setError(mapsErrorMessage(error));});
+    return()=>{disposed=true;clearTimeout(timeout);unwatch();observer?.disconnect();map?.remove();mapRef.current=null;layerRef.current=null;};
   },[mapAttempt,mapKey,mapId]);
   useEffect(()=>{
     if(!ready||!mapRef.current)return;
+    try {
     const L=libraryRef.current;const layer=layerRef.current;layer.clearLayers();
     for(const m of visible){
       const s=data.config[m.kind];const circle=s.shape==='circle';
@@ -81,12 +91,14 @@ export default function MarketplaceMap({ data, search='', contractors:walkingCon
     }
     const key=JSON.stringify([query,filters]);
     if(visible.length&&viewKey.current!==key){mapRef.current.fitBounds(visible.map(m=>[m.latitude,m.longitude]),{maxZoom:14,padding:[45,45]});viewKey.current=key;}
+    if(loggedMarkerCount.current!==visible.length){mapDiagnostic('info','map-markers-rendered',{markerCount:visible.length});loggedMarkerCount.current=visible.length;}
+    } catch(error){mapDiagnostic('error','map-markers-failed',{...mapFailureDetails(error),markerCount:visible.length});setError('Map locations could not be drawn. Check the browser Console for Eden Maps diagnostics.');}
   },[ready,visible,data.config,query,filters]);
   const focusWorker=worker=>{
     setSelected(worker.id);const marker=data.markers.find(m=>m.id===worker.id);
     if(marker&&mapRef.current)mapRef.current.setView([marker.latitude,marker.longitude],13);
   };
-  return <div className="operations-map">
+  return <div className="operations-map" data-google-maps-key-configured={String(Boolean(mapKey?.trim()))}>
     <div className="map-filter-chips"><button type="button" aria-pressed={walking} onClick={()=>setWalking(v=>!v)}>Door-to-door routes</button></div>
     {walking&&<WalkingRoutes mapRef={mapRef} libraryRef={libraryRef} ready={ready} contractors={walkingContractors} config={data.config.walking}/>}
     <div className="operations-map__heading"><div><h3>Marketplace overview</h3><p>Explore jobs and contractor work locations.</p></div><button className="map-refresh" type="button" disabled={pending} onClick={()=>startTransition(()=>router.refresh())}>{pending?'Updating…':'Refresh map'}</button></div>

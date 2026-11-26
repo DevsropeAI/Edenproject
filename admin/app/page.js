@@ -1,3 +1,4 @@
+import { resolveAdminMapConfig } from './map-config.mjs';
 import { adminRequest } from './admin-api';
 import { Dashboard } from './dashboard';
 
@@ -19,8 +20,9 @@ export default async function Page({ searchParams }) {
         mapError = true;
       }
     }
+    const maps = resolveAdminMapConfig(mapData?.browserMapConfig, process.env);
     return <Dashboard data={data} mapData={mapData} mapError={mapError}
-      mapKey={process.env.EDEN_GOOGLE_MAPS_WEB_KEY} mapId={process.env.EDEN_GOOGLE_MAPS_MAP_ID}
+      mapKey={maps.key} mapId={maps.mapId}
       section={typeof section === 'string' && Object.hasOwn(data, section) ? section : 'Customers'}
       result={result}
       search={typeof search === 'string' ? search : ''}

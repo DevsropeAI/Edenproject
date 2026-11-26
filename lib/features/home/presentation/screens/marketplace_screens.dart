@@ -1,3 +1,4 @@
+import '../../../../core/widgets/desktop_workspace.dart';
 import 'booking_arrangement_picker.dart';
 import '../../../../core/network/api_client.dart';
 import 'address_search_field.dart';
@@ -256,7 +257,19 @@ class MarketPage extends StatelessWidget {
         )
       : _buildPage(context, dark);
 
-  Widget _buildPage(BuildContext context, bool useDark) => useDark
+  Widget _buildPage(BuildContext context, bool useDark) => EdenDesktopLayout.enabled(context)
+      ? Consumer(builder: (context,ref,_) {
+          final account=ref.watch(authProvider).maybeWhen(authenticated:(user)=>user,orElse:()=>null);
+          final role=account?.role ?? (darkNavigation is ContractorNavigation ? 'contractor' : 'customer');
+          String path='';
+          try {path=GoRouterState.of(context).uri.path;} catch (_) { /* Standalone previews have no router. */ }
+          final dashboard=['/customer-home','/contractor-home','/bookings','/explore-services','/properties'].contains(path);
+          return Theme(data:EdenDarkTheme.data,child:EdenDesktopWorkspace(title:title,role:role,name:account?.name??'',currentPath:path,
+            maxWidth:dashboard?EdenDesktopLayout.contentWidth:EdenDesktopLayout.formWidth,
+            actions:actions??const [],onBack:Navigator.of(context).canPop()?()=>context.pop():null,
+            onNavigate:(route){if(route!=path)context.go(route);},children:children));
+        })
+      : useDark
       ? _darkPage(context)
       : Scaffold(
           backgroundColor: const Color(0xFFF6F8F5),
@@ -494,8 +507,14 @@ class PropertiesScreen extends ConsumerWidget {
           const MarketCard(
             children: [Text('Add a property to start a booking.')],
           ),
-        for (final property in properties)
-          MarketCard(
+        if (EdenDesktopLayout.enabled(context))
+          EdenDesktopGrid(maximumColumns:2,children:[for(final property in properties) _propertyCard(context,ref,property)])
+        else
+          for(final property in properties) _propertyCard(context,ref,property),
+      ],
+    );
+  }
+  Widget _propertyCard(BuildContext context, WidgetRef ref, Property property) => MarketCard(
             children: [
               MarketHeading(property.name),
               Text(property.fullAddress),
@@ -560,10 +579,8 @@ class PropertiesScreen extends ConsumerWidget {
                 ],
               ),
             ],
-          ),
-      ],
-    );
-  }
+          );
+
 }
 
 class _PropertyEditor extends ConsumerStatefulWidget {

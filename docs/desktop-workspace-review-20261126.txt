@@ -1,0 +1,43 @@
+EDEN DESKTOP WORKSPACE - LOCAL REVIEW
+
+Scope
+- Wide browser windows (1100 logical pixels or more) use a desktop CRM workspace.
+- Native applications and narrower phone/tablet browser windows retain the existing mobile layout.
+- Shared desktop sidebar and header use existing routes, account role, profile and notification settings.
+- Customer overview shows real booking counts; customer Orders and Properties use responsive grids. Explore Services uses wider service grids.
+- Contractor dashboard shows map and scrollable job cards side by side on desktop. Pin/card selection and existing details/actions are reused.
+- Existing mobile navigation, phone card layout and business state/providers/API contracts are unchanged.
+- Existing colors/fonts are retained. Forms/details use a bounded readable width.
+
+Validation
+- 46 Flutter widget/unit tests passed; one browser-only test is skipped in the native test runner.
+- Desktop workspace tests passed at 1100, 1440 and 1920 pixels, including sidebar navigation and overview/card layout.
+- Existing phone booking, unread indicator, map, property pin and service-selection tests passed.
+- The dedicated headless Chrome test did not start successfully in this session; it is included for later execution on a browser-capable environment. Do not count it as a passed browser integration test.
+- No production web bundle was generated. build/web is deliberately deferred until UI review.
+- No backend, database, migrations, secrets, hosting configuration or admin panel files were changed in this UI pass. No commit or push was made.
+
+Local manual review
+1. Restart/hot-restart the Flutter Chrome session. Open at laptop width above 1100 logical pixels.
+2. Customer: inspect Overview, Orders, Explore services and Properties. Check sidebar selection, detail navigation, unread badges, booking tab changes and existing property actions.
+3. Contractor: check Available/Active tabs, default map overview, Show job pins, pin/card selection, vertical desktop job list and existing job details.
+4. Open profile, support, settings and order details; check header/back navigation and readable content width.
+5. Narrow the browser to around 390 pixels. Confirm the original bottom navigation and phone layouts return. Native mobile apps remain on their original layout regardless of width.
+
+Deployment remains a separate verification step
+- Previous requested features are implemented locally; the production Flutter bundle was previously confirmed older and needs replacing after this UI review.
+- Production admin Google Maps configuration still requires verification on its host. OAuth redirect URIs are not Maps API-key website restrictions.
+- At release time, check the commit and all newly added source files; build with the production EDEN_API_URL and configured browser Maps key; package every file in the new build/web; record its checksum; and verify that the deployed main.dart.js matches that release.
+- Verify Explore Services, one-time/long-term booking choices, a newly added active service, work pins and admin maps on the deployed URLs before calling deployment complete.
+
+Files changed/added in this UI pass
+- docs/desktop-workspace-review-20261126.txt
+- lib/core/widgets/desktop_workspace.dart
+- lib/features/home/presentation/screens/contractor_jobs_browser.dart
+- lib/features/home/presentation/screens/customer_booking_tabs.dart
+- lib/features/home/presentation/screens/customer_desktop_overview.dart
+- lib/features/home/presentation/screens/customer_home_screen.dart
+- lib/features/home/presentation/screens/explore_services_screen.dart
+- lib/features/home/presentation/screens/marketplace_screens.dart
+- test/desktop_browser_pages_test.dart
+- test/desktop_workspace_test.dart

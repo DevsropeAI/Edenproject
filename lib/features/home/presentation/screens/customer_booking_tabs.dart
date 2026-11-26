@@ -1,3 +1,5 @@
+import '../../../../core/widgets/desktop_workspace.dart';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -182,75 +184,78 @@ class _CustomerBookingTabsState extends State<CustomerBookingTabs> {
                     child: const Text('Refresh bookings'),
                   ),
           ),
-        for (final booking in jobs)
-          Padding(
-            padding: const EdgeInsets.only(bottom: EdenSpacing.gap),
-            child: GlassCard(
-              key: ValueKey('customer-booking-${booking.id}'),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          booking.service.label,
-                          style: text.titleMedium,
-                        ),
-                      ),
-                      if (booking.hasUnreadUpdates) ...[
-                        const SizedBox(width: EdenSpacing.sm),
-                        CustomerBookingUpdateBadge(
-                          key: ValueKey(
-                            'customer-booking-update-${booking.id}',
-                          ),
-                          label:
-                              'New update for ${booking.service.label}, booking ${booking.id}',
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: EdenSpacing.sm),
-                  Text(booking.property.fullAddress),
-                  const SizedBox(height: EdenSpacing.sm),
-                  Text(
-                    '${bookingDateLabel(booking)} · ${money.format(booking.total)} CAD',
-                    style: text.bodySmall,
-                  ),
-                  const SizedBox(height: EdenSpacing.gap),
-                  StatusChip(
-                    label: booking.status.label,
-                    status: switch (booking.status) {
-                      JobStatus.searching => EdenStatus.pending,
-                      JobStatus.completed => EdenStatus.complete,
-                      JobStatus.enRoute || JobStatus.working => EdenStatus.live,
-                      _ => EdenStatus.neutral,
-                    },
-                  ),
-                  const SizedBox(height: EdenSpacing.sm),
-                  Wrap(
-                    spacing: EdenSpacing.sm,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      TextButton(
-                        onPressed: () => widget.onOpen(booking),
-                        child: const Text('View details'),
-                      ),
-                      if (![
-                        JobStatus.searching,
-                        JobStatus.cancelled,
-                      ].contains(booking.status))
-                        BookingMessageButton(
-                          booking: booking,
-                          contractor: false,
-                        ),
-                    ],
+        if (EdenDesktopLayout.enabled(context))
+          EdenDesktopGrid(
+            children: [
+              for (final booking in jobs) _card(context, booking, money),
+            ],
+          )
+        else
+          for (final booking in jobs) _card(context, booking, money),
+      ],
+    );
+  }
+
+  Widget _card(BuildContext context, Booking booking, NumberFormat money) {
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: EdenSpacing.gap),
+      child: GlassCard(
+        key: ValueKey('customer-booking-${booking.id}'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(booking.service.label, style: text.titleMedium),
+                ),
+                if (booking.hasUnreadUpdates) ...[
+                  const SizedBox(width: EdenSpacing.sm),
+                  CustomerBookingUpdateBadge(
+                    key: ValueKey('customer-booking-update-${booking.id}'),
+                    label:
+                        'New update for ${booking.service.label}, booking ${booking.id}',
                   ),
                 ],
-              ),
+              ],
             ),
-          ),
-      ],
+            const SizedBox(height: EdenSpacing.sm),
+            Text(booking.property.fullAddress),
+            const SizedBox(height: EdenSpacing.sm),
+            Text(
+              '${bookingDateLabel(booking)} · ${money.format(booking.total)} CAD',
+              style: text.bodySmall,
+            ),
+            const SizedBox(height: EdenSpacing.gap),
+            StatusChip(
+              label: booking.status.label,
+              status: switch (booking.status) {
+                JobStatus.searching => EdenStatus.pending,
+                JobStatus.completed => EdenStatus.complete,
+                JobStatus.enRoute || JobStatus.working => EdenStatus.live,
+                _ => EdenStatus.neutral,
+              },
+            ),
+            const SizedBox(height: EdenSpacing.sm),
+            Wrap(
+              spacing: EdenSpacing.sm,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                TextButton(
+                  onPressed: () => widget.onOpen(booking),
+                  child: const Text('View details'),
+                ),
+                if (![
+                  JobStatus.searching,
+                  JobStatus.cancelled,
+                ].contains(booking.status))
+                  BookingMessageButton(booking: booking, contractor: false),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

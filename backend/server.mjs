@@ -1,3 +1,4 @@
+import {browserMapConfig} from './browser-map-config.mjs';
 import {validateWorkPin,saveWorkPin} from './work-pin.mjs';
 import {assignLongTerm} from './long-term-dispatch.mjs';
 import { image, marketplace } from './marketplace.mjs';
@@ -262,7 +263,7 @@ export function createApi({
         const result=await walking.route({method,path,admin:true,body:method==='POST'?await readJson(req):{},params:new URL(req.url,'http://localhost').searchParams});
         if(result!==undefined)return result;
       }
-      if(method==='GET'&&path==='/api/admin/map') return mapData(run,{role:'admin'});
+      if(method==='GET'&&path==='/api/admin/map') return {...await mapData(run,{role:'admin'}),browserMapConfig:browserMapConfig()};
       if (pricing) {
         const response=await catalogAdmin({path,method,read:()=>readJson(req),run,db});
         if(response!==undefined)return response;
